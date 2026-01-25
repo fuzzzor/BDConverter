@@ -1,4 +1,5 @@
 # BDConverter
+<img src="https://raw.githubusercontent.com/fuzzzor/BDConverter/refs/heads/main/icons/conv.png" height="120" />
 
 A lightweight web service to convert PDF files into comic-book archives (CBZ/CBR/CB7/CBT). Provides a small web UI and a REST API for batch conversions, progressive thumbnails and flexible image/archive options.
 
