@@ -1,0 +1,33 @@
+# Node.js dependencies
+node_modules/
+
+# Logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Runtime-generated files
+uploads/
+output/
+
+# Temporary files
+*.tmp
+*.temp
+
+# System files
+.DS_Store
+Thumbs.db
+
+# Binaries and DLLs (local debug only)
+bin/
+
+# Environment files
+.env
+.env.local
+
+# Docker
+.dockerignore
+
+# IDE / editors
+.vscode/
+.idea/

@@ -1,0 +1,71 @@
+app:
+  title: "BDConverter"
+  subtitle: "Ultimate Manga/Comic Converter"
+
+dropzone:
+  title: "Glisser-déposer vos PDF ici"
+  browse: "(ou cliquez pour parcourir)"
+  ready: "{count} fichier(s) prêt(s)"
+  pages: "{pages} pages • {size} MB"
+  change: "Cliquez ou déposez pour changer"
+
+controls:
+  dpi:
+    label: "Résolution (DPI)"
+    original: "Original (Extraction native)"
+    standard: "150 DPI (Standard)"
+    high: "225 DPI (Haute)"
+    very_high: "300 DPI (Très Haute)"
+    ultra: "450 DPI (Ultra)"
+    archive: "600 DPI (Ultra Haute)"
+
+  color_mode:
+    label: "Mode Couleur"
+    color: "Couleur (JPEG)"
+    gray: "Niveaux de gris"
+    mono: "Noir & Blanc (Monochrome)"
+
+  page_range:
+    label: "Plage de pages (Optionnel)"
+    start: "Début"
+    end: "Fin"
+
+  image_format:
+    label: "Format des images"
+    jpeg: "JPEG (Recommandé)"
+    png: "PNG (Sans perte)"
+    tiff: "TIFF"
+
+  output:
+    label: "Format d'archive & Compression"
+
+  archive_compression:
+    store: "Stockage (Aucune)"
+    fastest: "La plus rapide"
+    fast: "Rapide"
+    normal: "Normale"
+    maximum: "Maximale"
+    ultra: "Ultra"
+
+  compression:
+    label: "Qualité Image (Compression JPEG)"
+    light: "Léger"
+    max: "Qualité Max"
+
+buttons:
+  convert: "Convertir fichier(s)"
+  close: "Fermer"
+
+progress:
+  image: "Page : {current} / {total}"
+  file: "Fichier n° {current} / {total}"
+  assembling: "Assemblage…"
+  processing: "Traitement…"
+
+summary:
+  title: "🎉 Conversion terminée !"
+  files: "Fichiers convertis :"
+  pages: "Pages totales :"
+  duration: "Temps écoulé :"
+  size: "Taille totale :"
+  output_dir: "Dossier de sortie :"

@@ -1,0 +1,331 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title data-i18n="app.title">BDConverter</title>
+    <style>
+        body { font-family: 'Segoe UI', sans-serif; background: #1e1e1e; color: #eee; padding: 20px; display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 100vh; margin: 0; box-sizing: border-box; user-select: none; }
+        #console { user-select: text; }
+        
+        /* Main window container */
+        .main-card {
+            width: 500px; max-width: 95%;
+            background: #2d2d30;
+            border-radius: 20px;
+            padding: 70px 30px 30px 30px;
+            position: relative;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.6);
+            border: 1px solid #3e3e42;
+            display: flex; flex-direction: column; align-items: center;
+            margin-top: 50px;
+        }
+
+        .app-icon {
+            width: 130px; height: 130px;
+            object-fit: contain;
+            position: absolute;
+            top: -65px; left: 50%;
+            transform: translateX(-50%);
+            filter: drop-shadow(0 10px 15px rgba(0,0,0,0.4));
+            transition: transform 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+            z-index: 10;
+        }
+        .app-icon:hover { transform: translateX(-50%) scale(1.1) rotate(5deg); }
+        
+        h1 { margin: 0 0 20px 0; color: #FF9800; letter-spacing: 1px; font-size: 1.8em; text-align: center; }
+
+        #drop-zone {
+            width: 100%; min-height: 180px; height: auto; /* Increased height to avoid text clipping */
+            border: 2px dashed #555; border-radius: 12px;
+            display: flex; flex-direction: column; align-items: center; justify-content: center;
+            margin-bottom: 25px; background: #252526; transition: 0.3s; cursor: pointer;
+            box-sizing: border-box; padding: 15px;
+        }
+        #drop-zone:hover { border-color: #FF9800; background: #2a2a2b; }
+        #drop-zone p { margin: 5px 0; color: #aaa; }
+        #drop-zone .icon { font-size: 36px; margin-bottom: 5px; }
+
+        .controls-grid {
+            display: grid; grid-template-columns: 1fr 1fr; gap: 15px;
+            width: 100%; padding: 0; margin-bottom: 20px;
+        }
+        
+        .control-group { display: flex; flex-direction: column; gap: 5px; }
+        label { font-size: 0.85em; color: #bbb; font-weight: 600; margin-bottom: 2px; }
+        select, input[type=range], input[type=number] {
+            padding: 8px; border-radius: 5px; border: 1px solid #555;
+            background: #3c3c3c; color: white; font-family: inherit;
+        }
+        select:focus, input:focus { border-color: #FF9800; outline: none; }
+        
+        .compression-box { display: flex; align-items: center; gap: 10px; }
+        #compression-val { font-weight: bold; color: #FF9800; width: 35px; text-align: right; }
+
+        .range-inputs { display: flex; gap: 10px; }
+        .range-inputs input { width: 100%; }
+
+        #btn-convert {
+            grid-column: 1 / -1;
+            background: #FF9800; color: white; font-weight: bold; font-size: 1.1em;
+            padding: 12px; border: none; border-radius: 6px; cursor: pointer;
+            transition: 0.2s; margin-top: 10px;
+        }
+        #btn-convert:hover { background: #FB8C00; }
+        #btn-convert:disabled { background: #555; cursor: not-allowed; opacity: 0.7; }
+
+        /* Classic progress bars */
+        .progress-container { width: 90%; margin-top: 10px; display: none; }
+        
+        /* NEW: Progress thumbnail */
+        .progress-thumb {
+            width: 180px;
+            margin: 15px auto;
+            position: relative;
+            display: none; /* Fully hidden on startup */
+            padding: 4px;
+            border: 1px solid #444;
+            border-radius: 10px;
+            box-sizing: border-box;
+            background: #1e1e1e;
+            align-items: center;
+            justify-content: center;
+        }
+
+        /* File counter on the right */
+        .progress-thumb .file-counter {
+            position: absolute;
+            right: -28px;
+            top: 50%;
+            transform: translateY(-50%);
+            font-weight: bold;
+            color: #FF9800;
+            font-size: 1em;
+        }
+
+        /* Inner frame defining final size */
+        .progress-thumb .reveal-frame {
+            width: 100%;
+            aspect-ratio: 2 / 3; /* Comic/Manga ratio, adjustable */
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .progress-thumb img {
+            width: 100%;
+            display: block;
+            border-radius: 8px;
+        }
+
+        /* Color image progressively revealed from left to right */
+        .progress-thumb .color-reveal {
+            position: relative;
+            z-index: 1;
+            overflow: hidden; /* Actual mask */
+            width: 0%; /* Starts hidden */
+            height: 100%;
+            transition: width 0.6s ease-out;
+            will-change: width;
+        }
+
+        .progress-thumb .color-reveal img {
+            width: 100%;
+            height: 100%;
+            object-fit: cover; /* Avoid top-left corner stretching */
+            display: block;
+            border-radius: 6px; /* Slightly smaller than frame */
+        }
+        .progress-label { display: flex; justify-content: space-between; font-size: 0.9em; margin-bottom: 5px; color: #ccc; font-weight: bold; }
+        .progress-track { width: 100%; height: 25px; background: #333; border-radius: 12px; overflow: hidden; margin-bottom: 15px; box-shadow: inset 0 2px 4px rgba(0,0,0,0.5); }
+        .progress-fill { height: 100%; width: 0%; transition: width 0.3s ease; display: flex; align-items: center; justify-content: flex-end; padding-right: 10px; font-size: 0.8em; color: rgba(255,255,255,0.8); }
+        
+        #prog-total-fill { background: #2196F3; } /* Blue for total */
+        #prog-current-fill { background: #FF9800; } /* Orange for current file */
+
+        /* Technical logs removed from UI */
+
+        /* Mobile layout adjustments */
+        @media (max-width: 550px) {
+            .controls-grid { grid-template-columns: 1fr; }
+            .main-card { padding: 60px 20px 20px 20px; }
+        }
+
+        /* MODAL */
+        .modal {
+            display: none; position: fixed; z-index: 2000; left: 0; top: 0; width: 100%; height: 100%;
+            background-color: rgba(0,0,0,0.7); align-items: center; justify-content: center;
+        }
+        .modal-content {
+            background-color: #2d2d30; padding: 30px; border-radius: 10px;
+            width: 600px; max-width: 90%; /* Enlarged for thumbnails */
+            text-align: center; box-shadow: 0 4px 15px rgba(0,0,0,0.5); border: 1px solid #444;
+        }
+        .modal h2 { color: #FF9800; margin-top: 0; }
+        .summary-stats { text-align: left; margin: 20px 0; background: #333; padding: 15px; border-radius: 5px; }
+        .stat-row { display: flex; justify-content: space-between; margin-bottom: 8px; font-size: 0.9em; }
+        .stat-label { color: #aaa; }
+        .stat-value { font-weight: bold; color: #fff; }
+        .modal-actions { display: flex; gap: 10px; justify-content: center; margin-top: 20px; }
+        .modal-btn {
+            padding: 10px 20px; border: none; border-radius: 5px; cursor: pointer; font-weight: bold;
+            transition: 0.2s;
+        }
+        .btn-primary { background: #FF9800; color: white; }
+        .btn-primary:hover { background: #FB8C00; }
+        .btn-secondary { background: #555; color: white; }
+        .btn-secondary:hover { background: #666; }
+    </style>
+</head>
+<body>
+    <div class="main-card">
+        <img src="icons/conv.png" alt="Icon" class="app-icon">
+        <h1>BDConverter</h1>
+        
+        <div id="drop-zone">
+            <div class="icon">📂</div>
+            <div style="font-size: 1.1em; font-weight: bold;" data-i18n="dropzone.title">Drag & drop your files here</div>
+            <p data-i18n="dropzone.browse">(or click to browse)</p>
+        </div>
+        
+        <div class="controls-grid">
+        <!-- DPI resolution -->
+        <div class="control-group">
+            <label data-i18n="controls.dpi.label">DPI Resolution</label>
+            <select id="dpi" title="Choose resolution. 'Original' extracts images without modification (fast). Other options re-render pages.">
+                <option value="original" selected data-i18n="controls.dpi.original">Original (Native extraction)</option>
+                <option value="150" data-i18n="controls.dpi.standard">150 DPI (Standard)</option>
+                <option value="225" data-i18n="controls.dpi.high">225 DPI (High)</option>
+                <option value="300" data-i18n="controls.dpi.very_high">300 DPI (Very High)</option>
+                <option value="450" data-i18n="controls.dpi.ultra">450 DPI (Ultra)</option>
+                <option value="600" data-i18n="controls.dpi.archive">600 DPI (Ultra High)</option>
+            </select>
+        </div>
+
+        <!-- Color mode -->
+        <div class="control-group">
+            <label data-i18n="controls.color_mode.label">Color Mode</label>
+            <select id="colorMode" title="Change color mode. Ignored in 'Original' mode.">
+                <option value="jpeg" selected data-i18n="controls.color_mode.color">Color (JPEG)</option>
+                <option value="gray" data-i18n="controls.color_mode.gray">Grayscale</option>
+                <option value="mono" data-i18n="controls.color_mode.mono">Black & White (Monochrome)</option>
+            </select>
+        </div>
+
+        <!-- Page range -->
+        <div class="control-group">
+            <label data-i18n="controls.page_range.label">Page Range (Optional)</label>
+            <div class="range-inputs" title="Define page range to convert (leave empty for all pages).">
+                <input type="number" id="pageStart" data-i18n-placeholder="controls.page_range.start" placeholder="Start" min="1">
+                <input type="number" id="pageEnd" data-i18n-placeholder="controls.page_range.end" placeholder="End" min="1">
+            </div>
+        </div>
+
+        <!-- Internal image format -->
+        <div class="control-group">
+            <label data-i18n="controls.image_format.label">Image Format</label>
+            <div style="position:relative;">
+                <select id="imgFormat" title="Image format inside the archive." style="width:100%;">
+                    <option value="jpeg" selected data-i18n="controls.image_format.jpeg">JPEG (Recommended)</option>
+                    <option value="png" data-i18n="controls.image_format.png">PNG (Lossless)</option>
+                    <option value="tiff" data-i18n="controls.image_format.tiff">TIFF</option>
+                </select>
+                <!-- Decorative icon centered under the select -->
+                <img src="icons/nopdf.png"
+                     alt="No PDF"
+                     style="position:absolute; left:50%; top:100%; transform:translateX(-50%); margin-top:6px; width:96px; opacity:0.7; pointer-events:none;" />
+            </div>
+        </div>
+
+        <!-- Output format -->
+        <div class="control-group">
+            <label data-i18n="controls.output.label">Archive Format & Compression</label>
+            <div style="display:flex; gap:10px;">
+                <select id="format" style="flex:1;" title="Final archive format (CBZ recommended).">
+                    <option value="cbz">.cbz (Zip)</option>
+                    <option value="cbr">.cbr (RAR)</option>
+                    <option value="cbt">.cbt (Tar)</option>
+                    <option value="cb7">.cb7 (7-Zip)</option>
+                </select>
+                <select id="archiveCompression" style="flex:1;" title="Archive compression level.">
+                    <option value="0" data-i18n="controls.archive_compression.store">Store (None)</option>
+                    <option value="1" data-i18n="controls.archive_compression.fastest">Fastest</option>
+                    <option value="3" data-i18n="controls.archive_compression.fast">Fast</option>
+                    <option value="5" selected data-i18n="controls.archive_compression.normal">Normal</option>
+                    <option value="7" data-i18n="controls.archive_compression.maximum">Maximum</option>
+                    <option value="9" data-i18n="controls.archive_compression.ultra">Ultra</option>
+                </select>
+            </div>
+        </div>
+
+        <!-- JPEG compression -->
+        <div class="control-group" style="grid-column: 1 / -1;">
+            <label data-i18n="controls.compression.label">Image Quality (JPEG Compression)</label>
+            <div class="compression-box" title="JPEG image quality (80% is a good compromise).">
+                <span style="font-size: 0.8em;" data-i18n="controls.compression.light">Light</span>
+                <input type="range" id="compression" min="40" max="100" value="80" style="flex-grow: 1;">
+                <span style="font-size: 0.8em;" data-i18n="controls.compression.max">Max Quality</span>
+                <span id="compression-val">80%</span>
+            </div>
+        </div>
+
+            <button id="btn-convert" disabled data-i18n="buttons.convert">Convert file(s)</button>
+        </div>
+
+        <!-- Progress area -->
+        <div id="counters-container" style="width:100%; display:none; align-items:center; justify-content:space-between; margin-top:10px;">
+            <div id="page-counter" style="color:#FF9800; font-weight:bold;">Image : 0 / 0</div>
+            <div style="display:flex; flex-direction:column; align-items:center;">
+                <div id="progress-thumb" class="progress-thumb"></div>
+                <!-- Global phase (below thumbnail, outside thumbnail) -->
+                <div id="phase-label" style="margin-top:6px; color:#FF9800; font-size:0.9em; text-align:center;"></div>
+            </div>
+            <div id="file-counter" style="color:#FF9800; font-weight:bold;">File # 0 / 0</div>
+        </div>
+        
+        <!-- Application version (inside window) -->
+        <div id="app-version" style="
+             position: absolute;
+             bottom: 10px;
+             right: 14px;
+             font-size: 0.7em;
+             color: #777;
+             opacity: 0.8;
+             user-select: none;
+        "></div>
+    </div> <!-- End of main-card -->
+
+    <!-- SUMMARY MODAL -->
+    <div id="summary-modal" class="modal">
+        <div class="modal-content">
+            <h2 data-i18n="summary.title">🎉 Conversion completed!</h2>
+            <div id="summary-details">
+                <!-- Dynamic content -->
+            </div>
+            <div class="modal-actions">
+                <!-- <button class="modal-btn btn-primary" id="btn-open-folder">Open folder</button> -->
+                <button class="modal-btn btn-secondary" id="btn-close-modal" data-i18n="buttons.close">Close</button>
+            </div>
+        </div>
+    </div>
+    
+    <!-- PDF.js for local page analysis -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+    <script>
+        // PDF.js worker configuration
+        if (window.pdfjsLib) {
+            window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+        }
+    </script>
+    <script src="renderer.js"></script>
+    <script>
+      // Display application version (bottom right)
+      fetch('/version')
+        .then(r => r.json())
+        .then(d => {
+          const el = document.getElementById('app-version');
+          if (el && d.version) el.textContent = 'v' + d.version;
+        })
+        .catch(() => {});
+    </script>
+</body>
+</html>
