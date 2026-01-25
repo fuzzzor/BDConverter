@@ -1,6 +1,6 @@
 {
   "name": "bdconverter",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "PDF to CBR/CBZ converter (Web version)",
   "main": "server.js",
   "scripts": {

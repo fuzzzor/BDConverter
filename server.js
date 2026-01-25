@@ -139,6 +139,9 @@ app.post('/convert', upload.array('files'), async (req, res) => {
         
         const results = [];
         for (const [index, file] of files.entries()) {
+            // Fix encoding for special characters (Mojibake fix)
+            file.originalname = Buffer.from(file.originalname, 'latin1').toString('utf8');
+
             sendProgress(requestId, {
                 type: 'progress',
                 currentFileIndex: index + 1,
@@ -287,6 +290,8 @@ app.post('/convert', upload.array('files'), async (req, res) => {
                             : 0;
                         sendProgress(requestId, {
                             type: 'progress',
+                            currentFileIndex: index + 1,
+                            totalFiles: files.length,
                             currentPct: progress,
                             currentPages: currentPages,
                             totalPages: effectiveTotalPages
@@ -314,7 +319,15 @@ app.post('/convert', upload.array('files'), async (req, res) => {
                 });
             });
 
-            sendProgress(requestId, { type: 'progress', currentPct: 100, status: "Assembling..." });
+            sendProgress(requestId, {
+                type: 'progress',
+                currentFileIndex: index + 1,
+                totalFiles: files.length,
+                currentPct: 100,
+                currentPages: effectiveTotalPages,
+                totalPages: effectiveTotalPages,
+                status: "Assembling..."
+            });
 
             // 5. Scan generated images
             let imgFiles = fs.readdirSync(tempDir);

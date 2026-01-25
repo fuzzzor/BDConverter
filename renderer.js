@@ -123,6 +123,8 @@ let fileCounter = 0;
 let totalFiles = 0;
 let imageCounter = 0;
 let totalImages = 0;
+let globalTotalImages = 0; // Backup for Original mode cumulative view
+let filesPageCounts = [];
 let conversionStartTime = 0;
 
 // Compression slider
@@ -137,6 +139,8 @@ const imgFormatSelect = document.getElementById('imgFormat');
 const compressionSlider = document.getElementById('compression');
 const compressionBox = compressionSlider.closest('.control-group');
 const originalHint = document.getElementById('original-hint');
+const formatSelect = document.getElementById('format');
+const archiveCompSelect = document.getElementById('archiveCompression');
 
 function updateOriginalMode() {
   const isOriginal = dpiSelect.value === 'original';
@@ -163,10 +167,27 @@ function updateOriginalMode() {
     compressionBox.style.opacity = '1';
     compressionSlider.style.cursor = 'pointer';
   }
+  updateCompressionUI();
+}
+
+function updateCompressionUI() {
+    const isOriginal = dpiSelect.value === 'original';
+    const isCbt = formatSelect.value === 'cbt';
+    
+    if (isOriginal || isCbt) {
+        archiveCompSelect.disabled = true;
+        archiveCompSelect.style.opacity = '0.5';
+        archiveCompSelect.style.cursor = 'not-allowed';
+    } else {
+        archiveCompSelect.disabled = false;
+        archiveCompSelect.style.opacity = '1';
+        archiveCompSelect.style.cursor = 'pointer';
+    }
 }
 
 // Listen for DPI selector changes
 dpiSelect.addEventListener('change', updateOriginalMode);
+formatSelect.addEventListener('change', updateCompressionUI);
 
 // Initialize on load
 updateOriginalMode();
@@ -186,21 +207,37 @@ async function handleFiles(fileList) {
   const files = Array.from(fileList || []).filter(f => f.name && f.name.toLowerCase().endsWith('.pdf'));
   if (files.length === 0) return;
 
+  const loadingStatus = document.getElementById('loading-status');
+  if (loadingStatus) {
+    loadingStatus.style.display = 'block';
+    const tpl = currentTranslations['dropzone.analyzing'] || "Analyzing file {current} / {total}...";
+    loadingStatus.innerText = tpl.replace('{current}', 0).replace('{total}', files.length);
+  }
+
   selectedFiles = files;
   totalFiles = files.length;
   totalImages = 0;
+  filesPageCounts = [];
   let totalSize = 0;
 
-  for (const file of files) {
+  for (const [i, file] of files.entries()) {
+    if (loadingStatus) {
+      const tpl = currentTranslations['dropzone.analyzing'] || "Analyzing file {current} / {total}...";
+      loadingStatus.innerText = tpl.replace('{current}', i + 1).replace('{total}', files.length);
+    }
     totalSize += file.size;
     try {
       const buffer = await file.arrayBuffer();
       const pdf = await window.pdfjsLib.getDocument({ data: buffer }).promise;
-      totalImages += pdf.numPages;
+      const pages = pdf.numPages;
+      filesPageCounts.push(pages);
+      totalImages += pages;
     } catch (e) {
       console.warn('PDF page count error', e);
+      filesPageCounts.push(0);
     }
   }
+  globalTotalImages = totalImages; // Save global total
 
   // Upload zone information (highlighted)
   dropZone.innerHTML = `
@@ -215,7 +252,10 @@ async function handleFiles(fileList) {
   imageCounter = 0;
   if (countersContainer) countersContainer.style.display = 'flex';
   if (pageCounterEl) pageCounterEl.innerText = `Page : 0 / ${totalImages}`;
-  if (fileCounterEl) fileCounterEl.innerText = `File # 0 / ${totalFiles}`;
+  if (fileCounterEl) {
+    const tpl = currentTranslations['progress.file'] || "File # {current} / {total}";
+    fileCounterEl.innerText = tpl.replace('{current}', 0).replace('{total}', totalFiles);
+  }
 
   btnConvert.disabled = false;
 }
@@ -224,6 +264,11 @@ async function handleFiles(fileList) {
 btnConvert.addEventListener('click', async () => {
   if (!selectedFiles.length) return;
 
+  // Immediate feedback
+  btnConvert.disabled = true;
+  const originalBtnText = btnConvert.innerText;
+  btnConvert.innerText = currentTranslations['buttons.starting'] || "Starting...";
+  
   conversionStartTime = Date.now();
   fileCounter = 0;
   imageCounter = 0;
@@ -239,7 +284,10 @@ btnConvert.addEventListener('click', async () => {
       fileCounter += 1;
       imageCounter = 0;
 
-      if (fileCounterEl) fileCounterEl.innerText = `Fichier n° ${fileCounter} / ${totalFiles}`;
+      if (fileCounterEl) {
+        const tpl = currentTranslations['progress.file'] || "File # {current} / {total}";
+        fileCounterEl.innerText = tpl.replace('{current}', fileCounter).replace('{total}', totalFiles);
+      }
       if (pageCounterEl) pageCounterEl.innerText = `Page : ${imageCounter} / ${totalImages}`;
 
       const isOriginal = document.getElementById('dpi')?.value === 'original';
@@ -258,31 +306,76 @@ btnConvert.addEventListener('click', async () => {
     if (data.type === 'progress') {
       const isOriginal = document.getElementById('dpi')?.value === 'original';
 
-      if (!isOriginal && typeof data.currentPages === 'number' && typeof data.totalPages === 'number') {
-        imageCounter = data.currentPages;
-        totalImages = data.totalPages;
-        if (pageCounterEl) pageCounterEl.innerText = `Page : ${imageCounter} / ${totalImages}`;
-        if (totalImages > 0) {
-          const pct = Math.min(100, Math.max(0, (imageCounter / totalImages) * 100));
-          const reveal = progressThumb.querySelector('.color-reveal');
-          if (reveal) reveal.style.width = pct + '%';
-          if (progCurrentFill) progCurrentFill.style.width = pct + '%';
-          if (lblCurrentPct) lblCurrentPct.innerText = Math.round(pct) + '%';
+      if (isOriginal) {
+        // --- ORIGINAL MODE: Cumulative global progress ---
+        // Restore global total if it was overwritten
+        totalImages = globalTotalImages;
+
+        const currentFileIdx = (data.currentFileIndex || 1) - 1;
+        let previousPagesCount = 0;
+        for (let i = 0; i < currentFileIdx; i++) {
+          previousPagesCount += (filesPageCounts[i] || 0);
         }
+
+        let currentFileConverted = 0;
+        if (data.currentPct === 100) {
+          currentFileConverted = filesPageCounts[currentFileIdx] || 0;
+        }
+
+        imageCounter = previousPagesCount + currentFileConverted;
+
+      } else {
+        // --- NORMAL MODE: Per-file progress (Legacy behavior) ---
+        if (typeof data.totalPages === 'number') totalImages = data.totalPages;
+        imageCounter = data.currentPages || 0;
+      }
+
+      // Update UI
+      if (pageCounterEl) pageCounterEl.innerText = `Page : ${imageCounter} / ${totalImages}`;
+      
+      if (totalImages > 0) {
+        const pct = Math.min(100, Math.max(0, (imageCounter / totalImages) * 100));
+        
+        // Fix: In Original mode, do not animate the thumbnail (keep it fully revealed as initialized)
+        if (!isOriginal) {
+            const reveal = progressThumb.querySelector('.color-reveal');
+            if (reveal) reveal.style.width = pct + '%';
+        }
+
+        if (progCurrentFill) progCurrentFill.style.width = pct + '%';
+        if (lblCurrentPct) lblCurrentPct.innerText = Math.round(pct) + '%';
+      }
+
+      // Update filename display based on current index
+      const statusFileIdx = (data.currentFileIndex || 1) - 1;
+      if (selectedFiles[statusFileIdx]) {
+          const nameEl = document.getElementById('current-file-name');
+          if (nameEl) nameEl.innerText = selectedFiles[statusFileIdx].name;
       }
 
       if (data.status) {
         const phaseLabel = document.getElementById('phase-label');
         if (phaseLabel) {
-          if (/assemblage/i.test(data.status)) phaseLabel.innerText = 'Assembling…';
-          else if (/analyse/i.test(data.status)) phaseLabel.innerText = 'Processing…';
-          else phaseLabel.innerText = data.status;
+          const lower = data.status.toLowerCase();
+          let statusText = data.status;
+
+          // Translate known statuses
+          if (lower.includes('analyzing') || lower.includes('analyse')) {
+              statusText = currentTranslations['progress.processing'] || "Processing...";
+          } else if (lower.includes('assembling') || lower.includes('assemblage')) {
+              statusText = currentTranslations['progress.assembling'] || "Assembling...";
+          }
+          
+          phaseLabel.innerText = statusText;
         }
       }
 
       if (data.currentPct === 100 && typeof data.currentFileIndex === 'number' && typeof data.totalFiles === 'number') {
         fileCounter = data.currentFileIndex;
-        if (fileCounterEl) fileCounterEl.innerText = `Fichier n° ${fileCounter} / ${data.totalFiles}`;
+        if (fileCounterEl) {
+            const tpl = currentTranslations['progress.file'] || "File # {current} / {total}";
+            fileCounterEl.innerText = tpl.replace('{current}', fileCounter).replace('{total}', data.totalFiles);
+        }
       }
     }
   };
@@ -301,17 +394,33 @@ btnConvert.addEventListener('click', async () => {
   formData.append('archiveCompression', document.getElementById('archiveCompression').value);
   formData.append('imgFormat', document.getElementById('imgFormat').value);
 
-  const response = await fetch('/convert', { method: 'POST', body: formData });
-  const result = await response.json();
+  try {
+    const response = await fetch('/convert', { method: 'POST', body: formData });
+    const result = await response.json();
 
-  showSummary(result.stats);
-  eventSource.close();
+    showSummary(result.stats);
+  } catch (e) {
+    console.error(e);
+    alert('An error occurred during conversion start.');
+    btnConvert.disabled = false;
+    btnConvert.innerText = originalBtnText;
+  } finally {
+    eventSource.close();
+  }
 });
 
 btnCloseModal.addEventListener('click', () => {
   modal.style.display = 'none';
   resetUI();
 });
+
+// Allow resetting UI by clicking the app icon
+const appIcon = document.querySelector('.app-icon');
+if (appIcon) {
+  appIcon.addEventListener('click', () => {
+    resetUI();
+  });
+}
 
 // Display conversion summary modal
 function showSummary(stats) {
@@ -353,20 +462,29 @@ function showSummary(stats) {
 // Reset UI to initial state
 function resetUI() {
   selectedFiles = [];
+  filesPageCounts = [];
   fileCounter = 0;
   totalFiles = 0;
   imageCounter = 0;
   totalImages = 0;
+  globalTotalImages = 0;
 
   dropZone.innerHTML = `
     <div class="icon">📂</div>
     <div style="font-size: 1.1em; font-weight: bold;" data-i18n="dropzone.title">Drag & drop your files here</div>
     <p data-i18n="dropzone.browse">(or click to browse)</p>
+    <div id="loading-status" style="display:none; color:#FF9800; margin-top:5px; font-size:0.9em;"></div>
   `;
   applyTranslations(currentTranslations);
 
+  // Reset button text in case it was stuck on "Starting..."
+  btnConvert.innerText = currentTranslations['buttons.convert'] || "Convert file(s)";
+
   if (pageCounterEl) pageCounterEl.innerText = 'Page : 0 / 0';
-  if (fileCounterEl) fileCounterEl.innerText = 'Fichier n° 0 / 0';
+  if (fileCounterEl) {
+      const tpl = currentTranslations['progress.file'] || "File # {current} / {total}";
+      fileCounterEl.innerText = tpl.replace('{current}', 0).replace('{total}', 0);
+  }
   if (countersContainer) countersContainer.style.display = 'none';
 
   progressThumb.innerHTML = '';
@@ -376,6 +494,9 @@ function resetUI() {
 
   const phaseLabel = document.getElementById('phase-label');
   if (phaseLabel) phaseLabel.innerText = '';
+  
+  const nameEl = document.getElementById('current-file-name');
+  if (nameEl) nameEl.innerText = '';
 }
 
 // Generate a UUID (compatible with older browsers)

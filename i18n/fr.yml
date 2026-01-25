@@ -5,6 +5,7 @@ app:
 dropzone:
   title: "Glisser-déposer vos PDF ici"
   browse: "(ou cliquez pour parcourir)"
+  analyzing: "Analyse : {current} / {total}..."
   ready: "{count} fichier(s) prêt(s)"
   pages: "{pages} pages • {size} MB"
   change: "Cliquez ou déposez pour changer"
@@ -54,6 +55,7 @@ controls:
 
 buttons:
   convert: "Convertir fichier(s)"
+  starting: "Démarrage..."
   close: "Fermer"
 
 progress:
