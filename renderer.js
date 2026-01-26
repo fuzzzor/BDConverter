@@ -114,7 +114,7 @@ const btnCloseModal = document.getElementById('btn-close-modal');
 const fileInput = document.createElement('input');
 fileInput.type = 'file';
 fileInput.multiple = true;
-fileInput.accept = '.pdf';
+fileInput.accept = '.pdf,.cbz,.cbr,.cbt,.cb7,.zip,.rar,.tar,.7z';
 fileInput.style.display = 'none';
 document.body.appendChild(fileInput);
 
@@ -204,7 +204,12 @@ dropZone.addEventListener('click', () => fileInput.click());
 fileInput.addEventListener('change', e => handleFiles(e.target.files));
 
 async function handleFiles(fileList) {
-  const files = Array.from(fileList || []).filter(f => f.name && f.name.toLowerCase().endsWith('.pdf'));
+  const allowedExtensions = ['.pdf', '.cbz', '.cbr', '.cbt', '.cb7', '.zip', '.rar', '.tar', '.7z'];
+  const files = Array.from(fileList || []).filter(f => {
+    if (!f.name) return false;
+    const lower = f.name.toLowerCase();
+    return allowedExtensions.some(ext => lower.endsWith(ext));
+  });
   if (files.length === 0) return;
 
   const loadingStatus = document.getElementById('loading-status');
@@ -219,6 +224,7 @@ async function handleFiles(fileList) {
   totalImages = 0;
   filesPageCounts = [];
   let totalSize = 0;
+  let hasArchives = false;
 
   for (const [i, file] of files.entries()) {
     if (loadingStatus) {
@@ -227,23 +233,70 @@ async function handleFiles(fileList) {
     }
     totalSize += file.size;
     try {
-      const buffer = await file.arrayBuffer();
-      const pdf = await window.pdfjsLib.getDocument({ data: buffer }).promise;
-      const pages = pdf.numPages;
-      filesPageCounts.push(pages);
-      totalImages += pages;
+      if (file.name.toLowerCase().endsWith('.pdf')) {
+        const buffer = await file.arrayBuffer();
+        const pdf = await window.pdfjsLib.getDocument({ data: buffer }).promise;
+        const pages = pdf.numPages;
+        filesPageCounts.push(pages);
+        totalImages += pages;
+      } else if (file.name.match(/\.(cbz|zip)$/i)) {
+        try {
+          const zip = await JSZip.loadAsync(file);
+          let count = 0;
+          zip.forEach((relativePath, zipEntry) => {
+             if (!zipEntry.dir && zipEntry.name.match(/\.(jpg|jpeg|png|gif|webp|tiff|bmp)$/i) && !zipEntry.name.startsWith('__MACOSX')) {
+                 count++;
+             }
+          });
+          if (count === 0) count = 1;
+          filesPageCounts.push(count);
+          totalImages += count;
+        } catch(e) {
+           console.warn('Zip analysis error', e);
+           hasArchives = true;
+           filesPageCounts.push(1);
+           totalImages += 1;
+        }
+      } else {
+        // Pour les autres archives (CBR, 7Z, TAR), on demande au serveur de les analyser
+        try {
+            const fd = new FormData();
+            fd.append('file', file);
+            // On envoie au serveur pour comptage (rapide en local)
+            const res = await fetch('/analyze', { method: 'POST', body: fd });
+            if (!res.ok) throw new Error('Analysis failed');
+            const data = await res.json();
+            const count = data.pages || 1;
+            
+            filesPageCounts.push(count);
+            totalImages += count;
+        } catch(e) {
+            console.warn('Server analysis error', e);
+            hasArchives = true; // Fallback d'affichage si l'analyse échoue
+            filesPageCounts.push(1);
+            totalImages += 1;
+        }
+      }
     } catch (e) {
-      console.warn('PDF page count error', e);
+      console.warn('Page count error', e);
       filesPageCounts.push(0);
     }
   }
   globalTotalImages = totalImages; // Save global total
 
   // Upload zone information (highlighted)
+  let pagesHtml = '';
+  if (hasArchives) {
+      pagesHtml = `<div style="color:#FF9800;" data-i18n="dropzone.size_only" data-i18n-args='{"size":"${(totalSize / (1024 * 1024)).toFixed(2)}"}'>${(totalSize / (1024 * 1024)).toFixed(2)} MB</div>`;
+  } else {
+      pagesHtml = `<div style="color:#FF9800;" data-i18n="dropzone.pages" data-i18n-args='{"pages":${totalImages},"size":"${(totalSize / (1024 * 1024)).toFixed(2)}"}'>${totalImages} pages • ${(totalSize / (1024 * 1024)).toFixed(2)} MB</div>`;
+  }
+
   dropZone.innerHTML = `
     <div style="color:#FF9800; font-weight:bold; font-size:1.1em;" data-i18n="dropzone.ready" data-i18n-args='{"count":${totalFiles}}'>${totalFiles} file(s) ready</div>
-    <div style="color:#FF9800;" data-i18n="dropzone.pages" data-i18n-args='{"pages":${totalImages},"size":"${(totalSize / (1024 * 1024)).toFixed(2)}"}'>${totalImages} pages • ${(totalSize / (1024 * 1024)).toFixed(2)} MB</div>
+    ${pagesHtml}
     <div style="font-size:0.8em; color:#888; margin-top:4px;" data-i18n="dropzone.change">Click or drop to change</div>
+    <div id="loading-status" style="display:none; color:#FF9800; margin-top:5px; font-size:0.9em;"></div>
   `;
   // Re-apply translations for dynamically injected HTML
   applyTranslations(currentTranslations);
@@ -392,16 +445,23 @@ btnConvert.addEventListener('click', async () => {
   formData.append('format', document.getElementById('format').value);
   formData.append('compression', document.getElementById('compression').value);
   formData.append('archiveCompression', document.getElementById('archiveCompression').value);
+  formData.append('rotation', document.getElementById('rotation').value);
   formData.append('imgFormat', document.getElementById('imgFormat').value);
 
   try {
     const response = await fetch('/convert', { method: 'POST', body: formData });
+    
+    if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(`Server Error (${response.status}): ${errorText}`);
+    }
+
     const result = await response.json();
 
     showSummary(result.stats);
   } catch (e) {
     console.error(e);
-    alert('An error occurred during conversion start.');
+    alert(`Error: ${e.message}`);
     btnConvert.disabled = false;
     btnConvert.innerText = originalBtnText;
   } finally {
@@ -470,6 +530,9 @@ function resetUI() {
   globalTotalImages = 0;
 
   dropZone.innerHTML = `
+    <div style="color: #666; font-size: 0.85em; margin-bottom: 12px; font-weight: 500;">
+        <span data-i18n="dropzone.formats">Accepted formats:</span> PDF, CBZ, CBR, CBT, CB7, ZIP, RAR, TAR, 7Z
+    </div>
     <div class="icon">📂</div>
     <div style="font-size: 1.1em; font-weight: bold;" data-i18n="dropzone.title">Drag & drop your files here</div>
     <p data-i18n="dropzone.browse">(or click to browse)</p>

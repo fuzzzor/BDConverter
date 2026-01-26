@@ -183,6 +183,9 @@
         <h1>BDConverter</h1>
         
         <div id="drop-zone">
+            <div style="color: #666; font-size: 0.85em; margin-bottom: 12px; font-weight: 500;">
+                <span data-i18n="dropzone.formats">Accepted formats:</span> PDF, CBZ, CBR, CBT, CB7, ZIP, RAR, TAR, 7Z
+            </div>
             <div class="icon">📂</div>
             <div style="font-size: 1.1em; font-weight: bold;" data-i18n="dropzone.title">Drag & drop your files here</div>
             <p data-i18n="dropzone.browse">(or click to browse)</p>
@@ -231,15 +234,11 @@
                     <option value="png" data-i18n="controls.image_format.png">PNG (Lossless)</option>
                     <option value="tiff" data-i18n="controls.image_format.tiff">TIFF</option>
                 </select>
-                <!-- Decorative icon centered under the select -->
-                <img src="icons/nopdf.png"
-                     alt="No PDF"
-                     style="position:absolute; left:50%; top:100%; transform:translateX(-50%); margin-top:6px; width:96px; opacity:0.7; pointer-events:none;" />
             </div>
         </div>
 
         <!-- Output format -->
-        <div class="control-group">
+        <div class="control-group" style="grid-column: 1 / -1;">
             <label data-i18n="controls.output.label">Archive Format & Compression</label>
             <div style="display:flex; gap:10px;">
                 <select id="format" style="flex:1;" title="Final archive format (CBZ recommended).">
@@ -255,6 +254,12 @@
                     <option value="5" selected data-i18n="controls.archive_compression.normal">Normal</option>
                     <option value="7" data-i18n="controls.archive_compression.maximum">Maximum</option>
                     <option value="9" data-i18n="controls.archive_compression.ultra">Ultra</option>
+                </select>
+                <select id="rotation" style="width:110px;" title="Manually rotate pages.">
+                    <option value="0" selected data-i18n="controls.rotation.0">Rotation: 0°</option>
+                    <option value="90" data-i18n="controls.rotation.90">90° CW</option>
+                    <option value="180" data-i18n="controls.rotation.180">180°</option>
+                    <option value="270" data-i18n="controls.rotation.270">270° CW</option>
                 </select>
             </div>
         </div>
@@ -313,6 +318,7 @@
     
     <!-- PDF.js for local page analysis -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
     <script>
         // PDF.js worker configuration
         if (window.pdfjsLib) {

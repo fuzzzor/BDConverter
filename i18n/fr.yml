@@ -4,10 +4,12 @@ app:
 
 dropzone:
   title: "Glisser-déposer vos PDF ici"
+  formats: "Format accepté :"
   browse: "(ou cliquez pour parcourir)"
   analyzing: "Analyse : {current} / {total}..."
   ready: "{count} fichier(s) prêt(s)"
   pages: "{pages} pages • {size} MB"
+  size_only: "{size} MB"
   change: "Cliquez ou déposez pour changer"
 
 controls:
@@ -47,6 +49,12 @@ controls:
     normal: "Normale"
     maximum: "Maximale"
     ultra: "Ultra"
+
+  rotation:
+    0: "Rotation: 0°"
+    90: "90° Hor."
+    180: "180°"
+    270: "270° Hor."
 
   compression:
     label: "Qualité Image (Compression JPEG)"
