@@ -75,6 +75,27 @@ function applyTranslations(dict) {
     if (!value) return;
     el.setAttribute('placeholder', value);
   });
+
+  // Tooltips (titles)
+  const tooltipMap = {
+    'dpi': 'tooltips.dpi',
+    'colorMode': 'tooltips.color_mode',
+    '.range-inputs': 'tooltips.page_range',
+    'imgFormat': 'tooltips.image_format',
+    'format': 'tooltips.archive_format',
+    'archiveCompression': 'tooltips.archive_compression',
+    'rotation': 'tooltips.rotation',
+    '.compression-box': 'tooltips.quality'
+  };
+
+  Object.keys(tooltipMap).forEach(selector => {
+      const key = tooltipMap[selector];
+      const val = dict[key];
+      if (val) {
+          const els = selector.startsWith('.') ? document.querySelectorAll(selector) : [document.getElementById(selector)];
+          els.forEach(el => { if(el) el.title = val; });
+      }
+  });
 }
 
 // Load French translations if browser language starts with 'fr'
@@ -173,8 +194,10 @@ function updateOriginalMode() {
 function updateCompressionUI() {
     const isOriginal = dpiSelect.value === 'original';
     const isCbt = formatSelect.value === 'cbt';
+    const isPdf = formatSelect.value === 'pdf';
     
-    if (isOriginal || isCbt) {
+    // Archive compression
+    if (isOriginal || isCbt || isPdf) {
         archiveCompSelect.disabled = true;
         archiveCompSelect.style.opacity = '0.5';
         archiveCompSelect.style.cursor = 'not-allowed';
@@ -182,6 +205,19 @@ function updateCompressionUI() {
         archiveCompSelect.disabled = false;
         archiveCompSelect.style.opacity = '1';
         archiveCompSelect.style.cursor = 'pointer';
+    }
+
+    // Image format (disabled for PDF if requested, and obviously for Original)
+    if (isOriginal || isPdf) {
+        imgFormatSelect.disabled = true;
+        imgFormatSelect.style.opacity = '0.5';
+        // Force visual feedback for PDF
+        if (isPdf && !isOriginal) {
+            // Keep current value but grayed out, or maybe we don't care about value
+        }
+    } else {
+        imgFormatSelect.disabled = false;
+        imgFormatSelect.style.opacity = '1';
     }
 }
 
@@ -478,6 +514,7 @@ btnCloseModal.addEventListener('click', () => {
 const appIcon = document.querySelector('.app-icon');
 if (appIcon) {
   appIcon.addEventListener('click', () => {
+    resetControls();
     resetUI();
   });
 }
@@ -519,7 +556,24 @@ function showSummary(stats) {
   modal.style.display = 'flex';
 }
 
-// Reset UI to initial state
+// Reset all control gadgets to default
+function resetControls() {
+    dpiSelect.value = 'original';
+    colorModeSelect.value = 'jpeg';
+    document.getElementById('pageStart').value = '';
+    document.getElementById('pageEnd').value = '';
+    imgFormatSelect.value = 'jpeg';
+    formatSelect.value = 'cbz';
+    archiveCompSelect.value = '5';
+    document.getElementById('rotation').value = '0';
+    compressionSlider.value = 80;
+    lblCompression.innerText = '80%';
+    
+    // Trigger change events to update UI state (grayed out elements etc)
+    updateOriginalMode();
+}
+
+// Reset UI to initial state (files and progress only)
 function resetUI() {
   selectedFiles = [];
   filesPageCounts = [];

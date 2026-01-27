@@ -79,3 +79,13 @@ summary:
   duration: "Temps écoulé :"
   size: "Taille totale :"
   output_dir: "Dossier de sortie :"
+
+tooltips:
+  dpi: "Choisissez la résolution. 'Original' extrait sans modification (rapide). Les autres options recalculent les pages."
+  color_mode: "Change le mode couleur. Ignoré en mode 'Original'."
+  page_range: "Définit les pages à convertir (laisser vide pour tout)."
+  image_format: "Format des images à l'intérieur de l'archive."
+  archive_format: "Format final de l'archive."
+  archive_compression: "Niveau de compression de l'archive."
+  rotation: "Rotation manuelle des pages."
+  quality: "Qualité de l'image JPEG (80% est un bon compromis)."
