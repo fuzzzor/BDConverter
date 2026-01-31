@@ -10,11 +10,19 @@ BDConverter uses Poppler utilities (pdftoppm, pdfimages, pdfinfo) to render or e
 Features
 --------
 - Convert PDF → CBZ / CBT / CB7 / CBR
-- Render mode (pdftoppm): control DPI, image format (jpeg/png/tiff), JPEG quality, color mode
-- Original mode (pdfimages -all): extract native images without recompression
-- Real-time progress updates via Server-Sent Events (SSE) at /events
-- Progressive thumbnail generation and a final base64-encoded thumbnail per result
-- Persistent output directory configurable via environment variable
+- **Batch conversion** of folders: Drop multiple folders to create one archive per folder.
+- **Merge mode**: Drop multiple standalone images to merge them into a single archive.
+- **Image Processing**:
+  - Automatic conversion of WEBP/BMP to JPG (preserving quality settings).
+  - Smart resizing when DPI is specified.
+- **New Output Formats**:
+  - CBR (RAR4) for legacy compatibility.
+  - Directory (Folder extraction) to extract images without archiving.
+- Render mode (pdftoppm): control DPI, image format (jpeg/png/tiff), JPEG quality, color mode.
+- Original mode (pdfimages -all): extract native images without recompression.
+- Real-time progress updates via Server-Sent Events (SSE) at /events.
+- Progressive thumbnail generation and a final base64-encoded thumbnail per result.
+- Persistent output directory configurable via environment variable.
 
 Quick start
 -----------

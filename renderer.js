@@ -85,14 +85,17 @@ function applyTranslations(dict) {
     'format': 'tooltips.archive_format',
     'archiveCompression': 'tooltips.archive_compression',
     'rotation': 'tooltips.rotation',
-    '.compression-box': 'tooltips.quality'
+    '.compression-box': 'tooltips.quality',
+    'drop-zone': 'dropzone.tooltip'
   };
 
   Object.keys(tooltipMap).forEach(selector => {
       const key = tooltipMap[selector];
       const val = dict[key];
       if (val) {
-          const els = selector.startsWith('.') ? document.querySelectorAll(selector) : [document.getElementById(selector)];
+          const els = (selector.startsWith('.') || selector.startsWith('#'))
+            ? document.querySelectorAll(selector)
+            : [document.getElementById(selector)];
           els.forEach(el => { if(el) el.title = val; });
       }
   });
@@ -135,9 +138,17 @@ const btnCloseModal = document.getElementById('btn-close-modal');
 const fileInput = document.createElement('input');
 fileInput.type = 'file';
 fileInput.multiple = true;
-fileInput.accept = '.pdf,.cbz,.cbr,.cbt,.cb7,.zip,.rar,.tar,.7z';
+fileInput.accept = '.pdf,.cbz,.cbr,.cbt,.cb7,.zip,.rar,.tar,.7z,.jpg,.jpeg,.png,.tiff,.tif,.webp,.bmp';
 fileInput.style.display = 'none';
 document.body.appendChild(fileInput);
+
+// Hidden folder input
+const folderInput = document.createElement('input');
+folderInput.type = 'file';
+folderInput.webkitdirectory = true;
+folderInput.multiple = true;
+folderInput.style.display = 'none';
+document.body.appendChild(folderInput);
 
 let selectedFiles = [];
 let fileCounter = 0;
@@ -195,9 +206,10 @@ function updateCompressionUI() {
     const isOriginal = dpiSelect.value === 'original';
     const isCbt = formatSelect.value === 'cbt';
     const isPdf = formatSelect.value === 'pdf';
+    const isFolder = formatSelect.value === 'folder';
     
     // Archive compression
-    if (isOriginal || isCbt || isPdf) {
+    if (isOriginal || isCbt || isPdf || isFolder) {
         archiveCompSelect.disabled = true;
         archiveCompSelect.style.opacity = '0.5';
         archiveCompSelect.style.cursor = 'not-allowed';
@@ -232,15 +244,92 @@ updateOriginalMode();
 
 // Drag & Drop handling
 dropZone.addEventListener('dragover', e => e.preventDefault());
-dropZone.addEventListener('drop', e => {
+dropZone.addEventListener('drop', async e => {
   e.preventDefault();
-  handleFiles(e.dataTransfer.files);
+  const items = e.dataTransfer.items;
+  if (items && items.length > 0 && items[0].webkitGetAsEntry) {
+    const files = await scanFiles(items);
+    handleFiles(files);
+  } else {
+    handleFiles(e.dataTransfer.files);
+  }
 });
-dropZone.addEventListener('click', () => fileInput.click());
+
+async function scanFiles(items) {
+    const files = [];
+    const entries = [];
+    for (let i = 0; i < items.length; i++) {
+        const item = items[i];
+        let entry = null;
+        if (item.webkitGetAsEntry) {
+            entry = item.webkitGetAsEntry();
+        }
+        
+        if (entry) {
+            entries.push(entry);
+        } else if (item.kind === 'file') {
+            const f = item.getAsFile();
+            if (f) files.push(f);
+        }
+    }
+    
+    // Recursive scanner with error handling
+    const traverse = (entry, path = '') => new Promise((resolve) => {
+        try {
+            if (entry.isFile) {
+                entry.file(file => {
+                    file.fullPath = path + file.name;
+                    files.push(file);
+                    resolve();
+                }, (err) => resolve()); // Resolve on error
+            } else if (entry.isDirectory) {
+                const dirReader = entry.createReader();
+                const readAllEntries = () => {
+                    dirReader.readEntries(async (entries) => {
+                        if (entries.length === 0) {
+                            resolve();
+                        } else {
+                            // Serialize calls to avoid overload/race conditions in browsers
+                            for (const ent of entries) {
+                                await traverse(ent, path + entry.name + '/');
+                            }
+                            readAllEntries();
+                        }
+                    }, (err) => resolve()); // Resolve on error
+                };
+                readAllEntries();
+            } else {
+                resolve();
+            }
+        } catch(e) { resolve(); }
+    });
+
+    await Promise.all(entries.map(entry => traverse(entry)));
+    return files;
+}
+
+// Delegation for clicks
+dropZone.addEventListener('click', (e) => {
+    if (e.target.id === 'browse-files') {
+        fileInput.value = null;
+        fileInput.click();
+    }
+    else if (e.target.id === 'browse-folder') {
+        folderInput.value = null;
+        folderInput.click();
+    }
+    else if (e.target.id === 'btn-clear-selection') {
+        e.stopPropagation();
+        resetUI();
+    }
+    else if (!selectedFiles.length) fileInput.click();
+    else fileInput.click();
+});
 fileInput.addEventListener('change', e => handleFiles(e.target.files));
+folderInput.addEventListener('change', e => handleFiles(e.target.files));
 
 async function handleFiles(fileList) {
-  const allowedExtensions = ['.pdf', '.cbz', '.cbr', '.cbt', '.cb7', '.zip', '.rar', '.tar', '.7z'];
+  const allowedExtensions = ['.pdf', '.cbz', '.cbr', '.cbt', '.cb7', '.zip', '.rar', '.tar', '.7z', '.jpg', '.jpeg', '.png', '.tiff', '.tif', '.webp', '.bmp'];
   const files = Array.from(fileList || []).filter(f => {
     if (!f.name) return false;
     const lower = f.name.toLowerCase();
@@ -255,19 +344,44 @@ async function handleFiles(fileList) {
     loadingStatus.innerText = tpl.replace('{current}', 0).replace('{total}', files.length);
   }
 
-  selectedFiles = files;
-  totalFiles = files.length;
-  totalImages = 0;
-  filesPageCounts = [];
-  let totalSize = 0;
-  let hasArchives = false;
+  const startIndex = selectedFiles.length;
+  selectedFiles = selectedFiles.concat(files);
+  
+  // Estimate Tasks Count (folders + docs + merged images)
+  const groups = new Set();
+  let rootImagesCount = 0;
+  let rootDocsCount = 0;
+  
+  for (const f of selectedFiles) {
+      const path = f.fullPath || f.webkitRelativePath || f.name;
+      const normPath = path.replace(/\\/g, '/');
+      const parts = normPath.split('/');
+      
+      if (parts.length > 1) {
+          groups.add(parts[0]);
+      } else {
+          if (f.name.match(/\.(jpg|jpeg|png|tif|tiff|bmp|webp)$/i)) {
+              rootImagesCount++;
+          } else {
+              rootDocsCount++;
+          }
+      }
+  }
+  
+  let estimatedTasks = groups.size + rootDocsCount;
+  if (rootImagesCount > 0) estimatedTasks++;
+  
+  totalFiles = estimatedTasks;
+  
+  // Recalculate global stats
+  let totalSize = selectedFiles.reduce((acc, f) => acc + f.size, 0);
+  let hasArchives = selectedFiles.some(f => f.name.match(/\.(cbz|cbr|zip|rar|7z|tar)$/i));
 
   for (const [i, file] of files.entries()) {
     if (loadingStatus) {
       const tpl = currentTranslations['dropzone.analyzing'] || "Analyzing file {current} / {total}...";
-      loadingStatus.innerText = tpl.replace('{current}', i + 1).replace('{total}', files.length);
+      loadingStatus.innerText = tpl.replace('{current}', startIndex + i + 1).replace('{total}', totalFiles);
     }
-    totalSize += file.size;
     try {
       if (file.name.toLowerCase().endsWith('.pdf')) {
         const buffer = await file.arrayBuffer();
@@ -293,6 +407,10 @@ async function handleFiles(fileList) {
            filesPageCounts.push(1);
            totalImages += 1;
         }
+      } else if (file.name.match(/\.(jpg|jpeg|png|tiff|tif|webp|bmp)$/i)) {
+        // Image unique = 1 page
+        filesPageCounts.push(1);
+        totalImages += 1;
       } else {
         // Pour les autres archives (CBR, 7Z, TAR), on demande au serveur de les analyser
         try {
@@ -331,7 +449,11 @@ async function handleFiles(fileList) {
   dropZone.innerHTML = `
     <div style="color:#FF9800; font-weight:bold; font-size:1.1em;" data-i18n="dropzone.ready" data-i18n-args='{"count":${totalFiles}}'>${totalFiles} file(s) ready</div>
     ${pagesHtml}
-    <div style="font-size:0.8em; color:#888; margin-top:4px;" data-i18n="dropzone.change">Click or drop to change</div>
+    <div style="font-size:0.8em; color:#888; margin-top:4px;">
+        <span data-i18n="dropzone.add_more">Click or drop to add more</span>
+        <span style="margin:0 5px;">•</span>
+        <span id="btn-clear-selection" style="cursor:pointer; text-decoration:underline; color:#FF5722;" data-i18n="dropzone.clear">Clear all</span>
+    </div>
     <div id="loading-status" style="display:none; color:#FF9800; margin-top:5px; font-size:0.9em;"></div>
   `;
   // Re-apply translations for dynamically injected HTML
@@ -435,11 +557,17 @@ btnConvert.addEventListener('click', async () => {
         if (lblCurrentPct) lblCurrentPct.innerText = Math.round(pct) + '%';
       }
 
-      // Update filename display based on current index
-      const statusFileIdx = (data.currentFileIndex || 1) - 1;
-      if (selectedFiles[statusFileIdx]) {
-          const nameEl = document.getElementById('current-file-name');
-          if (nameEl) nameEl.innerText = selectedFiles[statusFileIdx].name;
+      // Update filename display based on server data or current index
+      const nameEl = document.getElementById('current-file-name');
+      if (nameEl) {
+          if (data.currentFileName) {
+              nameEl.innerText = data.currentFileName;
+          } else {
+              const statusFileIdx = (data.currentFileIndex || 1) - 1;
+              if (selectedFiles[statusFileIdx]) {
+                  nameEl.innerText = selectedFiles[statusFileIdx].name;
+              }
+          }
       }
 
       if (data.status) {
@@ -453,13 +581,23 @@ btnConvert.addEventListener('click', async () => {
               statusText = currentTranslations['progress.processing'] || "Processing...";
           } else if (lower.includes('assembling') || lower.includes('assemblage')) {
               statusText = currentTranslations['progress.assembling'] || "Assembling...";
+          } else if (lower.includes('conversion jpg')) {
+              // Preserve counter if present (x/y)
+              const match = data.status.match(/\(\d+\/\d+\)/);
+              const counter = match ? match[0] : '';
+              statusText = (currentTranslations['progress.converting_jpg'] || "Converting to JPG...") + ' ' + counter;
+          } else if (lower.includes('processing image')) {
+              const match = data.status.match(/(\d+\/\d+)/);
+              const counter = match ? match[0] : '';
+              statusText = (currentTranslations['progress.processing_image'] || "Processing image") + ' ' + counter;
           }
           
           phaseLabel.innerText = statusText;
         }
       }
 
-      if (data.currentPct === 100 && typeof data.currentFileIndex === 'number' && typeof data.totalFiles === 'number') {
+      // Update file counter if server info available
+      if (typeof data.currentFileIndex === 'number' && typeof data.totalFiles === 'number') {
         fileCounter = data.currentFileIndex;
         if (fileCounterEl) {
             const tpl = currentTranslations['progress.file'] || "File # {current} / {total}";
@@ -470,7 +608,13 @@ btnConvert.addEventListener('click', async () => {
   };
 
   const formData = new FormData();
-  selectedFiles.forEach(f => formData.append('files', f));
+  const filePaths = [];
+  selectedFiles.forEach(f => {
+      formData.append('files', f);
+      // Store path separately to ensure server gets it
+      filePaths.push(f.fullPath || f.webkitRelativePath || f.name);
+  });
+  formData.append('filePaths', JSON.stringify(filePaths));
   formData.append('requestId', requestId);
   
   // ✅ CRITICAL FIX: send ALL parameters to the server
@@ -585,11 +729,15 @@ function resetUI() {
 
   dropZone.innerHTML = `
     <div style="color: #666; font-size: 0.85em; margin-bottom: 12px; font-weight: 500;">
-        <span data-i18n="dropzone.formats">Accepted formats:</span> PDF, CBZ, CBR, CBT, CB7, ZIP, RAR, TAR, 7Z
+        <span data-i18n="dropzone.formats">Accepted formats:</span> PDF, CBZ, CBR, CBT, CB7, ZIP, RAR, TAR, 7Z, Images seules (JPG, PNG, TIFF)
     </div>
     <div class="icon">📂</div>
     <div style="font-size: 1.1em; font-weight: bold;" data-i18n="dropzone.title">Drag & drop your files here</div>
-    <p data-i18n="dropzone.browse">(or click to browse)</p>
+    <div style="margin-top: 5px;">
+        <span style="color:#aaa; font-size:0.9em; cursor:pointer; text-decoration:underline;" id="browse-files" data-i18n="dropzone.browse_files">(click to browse files)</span>
+        <span style="color:#aaa; font-size:0.9em;"> | </span>
+        <span style="color:#aaa; font-size:0.9em; cursor:pointer; text-decoration:underline;" id="browse-folder" data-i18n="dropzone.browse_folder">(or select folder)</span>
+    </div>
     <div id="loading-status" style="display:none; color:#FF9800; margin-top:5px; font-size:0.9em;"></div>
   `;
   applyTranslations(currentTranslations);

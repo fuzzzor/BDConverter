@@ -182,13 +182,17 @@
         <img src="icons/conv.png" alt="Icon" class="app-icon">
         <h1>BDConverter</h1>
         
-        <div id="drop-zone">
+        <div id="drop-zone" title="Drag & drop your files here">
             <div style="color: #666; font-size: 0.85em; margin-bottom: 12px; font-weight: 500;">
-                <span data-i18n="dropzone.formats">Accepted formats:</span> PDF, CBZ, CBR, CBT, CB7, ZIP, RAR, TAR, 7Z
+                <span data-i18n="dropzone.formats">Accepted formats:</span> PDF, CBZ, CBR, CBT, CB7, ZIP, RAR, TAR, 7Z, Images seules (JPG, PNG, TIFF)
             </div>
             <div class="icon">📂</div>
             <div style="font-size: 1.1em; font-weight: bold;" data-i18n="dropzone.title">Drag & drop your files here</div>
-            <p data-i18n="dropzone.browse">(or click to browse)</p>
+            <div style="margin-top: 5px;">
+                <span style="color:#aaa; font-size:0.9em; cursor:pointer; text-decoration:underline;" id="browse-files" data-i18n="dropzone.browse_files">(click to browse files)</span>
+                <span style="color:#aaa; font-size:0.9em;"> | </span>
+                <span style="color:#aaa; font-size:0.9em; cursor:pointer; text-decoration:underline;" id="browse-folder" data-i18n="dropzone.browse_folder">(or select folder)</span>
+            </div>
             <div id="loading-status" style="display:none; color:#FF9800; margin-top:5px; font-size:0.9em;"></div>
         </div>
         
@@ -242,11 +246,13 @@
             <label data-i18n="controls.output.label">Archive Format & Compression</label>
             <div style="display:flex; gap:10px;">
                 <select id="format" style="flex:1;" title="Final archive format.">
-                    <option value="cbz">.cbz (Zip)</option>
-                    <option value="cbr">.cbr (RAR)</option>
-                    <option value="cbt">.cbt (Tar)</option>
-                    <option value="cb7">.cb7 (7-Zip)</option>
-                    <option value="pdf">.pdf (Document)</option>
+                    <option value="cbz" data-i18n="controls.format_options.cbz">.cbz (Zip)</option>
+                    <option value="cbr" data-i18n="controls.format_options.cbr">.cbr (RAR5)</option>
+                    <option value="rar4" data-i18n="controls.format_options.rar4">.cbr (RAR4)</option>
+                    <option value="cbt" data-i18n="controls.format_options.cbt">.cbt (Tar)</option>
+                    <option value="cb7" data-i18n="controls.format_options.cb7">.cb7 (7-Zip)</option>
+                    <option value="pdf" data-i18n="controls.format_options.pdf">.pdf (Document)</option>
+                    <option value="folder" data-i18n="controls.format_options.folder">Folder (Images)</option>
                 </select>
                 <select id="archiveCompression" style="flex:1;" title="Archive compression level.">
                     <option value="0" data-i18n="controls.archive_compression.store">Store (None)</option>
@@ -317,6 +323,8 @@
         </div>
     </div>
     
+    <input type="file" id="folderInput" webkitdirectory style="display:none">
+    
     <!-- PDF.js for local page analysis -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
@@ -327,6 +335,7 @@
         }
     </script>
     <script src="renderer.js"></script>
+    <input type="file" id="folderInput" webkitdirectory directory multiple style="display:none">
     <script>
       // Display application version (bottom right)
       fetch('/version')

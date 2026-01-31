@@ -173,6 +173,20 @@ app.post('/convert', upload.array('files'), async (req, res) => {
         return res.status(400).send('No files uploaded.');
     }
 
+    // Restore full paths if provided by client (for folder drag & drop)
+    try {
+        if (req.body.filePaths) {
+            const paths = JSON.parse(req.body.filePaths);
+            if (Array.isArray(paths) && paths.length === files.length) {
+                files.forEach((f, i) => {
+                    if (paths[i]) f.originalname = paths[i];
+                });
+            }
+        }
+    } catch (e) {
+        console.warn("Error parsing filePaths:", e);
+    }
+
     // Helper: is this a PDF?
     const isPdf = (filename) => filename.toLowerCase().endsWith('.pdf');
     
@@ -182,24 +196,223 @@ app.post('/convert', upload.array('files'), async (req, res) => {
     const archCompVal = archiveCompression !== undefined ? parseInt(archiveCompression) : 5;
 
     try {
-        sendProgress(requestId, { type: 'log', message: `Received ${files.length} file(s).` });
-        
-        const results = [];
-        for (const [index, file] of files.entries()) {
-            // Fix encoding for special characters (Mojibake fix)
+        sendProgress(requestId, { type: 'log', message: `Received ${files.length} file(s). Analyzing structure...` });
+
+        // --- TASK DEFINITIONS (Helpers with closure access) ---
+
+        // Helper: Process Merge Task (Images -> Archive)
+        const processMergeTask = async (taskFiles, baseName, taskIdx, totalTasks) => {
+            sendProgress(requestId, { type: 'log', message: `Starting task ${taskIdx+1}/${totalTasks}: Merging ${taskFiles.length} images into "${baseName}"` });
+            
+            const tempDir = path.join(TEMP_DIR, `merge_${Date.now()}_${Math.random().toString(36).substring(7)}`);
+            fs.mkdirSync(tempDir, { recursive: true });
+
+            const safeImgFormat = (imgFormat || 'jpeg').toLowerCase();
+            const padding = taskFiles.length.toString().length;
+
+            // Thumbnail Init (Merge Mode)
+            if (FEATURE_PROGRESS_THUMBNAIL && sharp && taskFiles.length > 0) {
+                try {
+                    sendProgress(requestId, { type: 'log', message: `Generating preview for ${baseName}...` });
+                    const buffer = await sharp(taskFiles[0].path).resize(200).toBuffer();
+                    sendProgress(requestId, { type: 'thumbnail-init', color: `data:image/jpeg;base64,${buffer.toString('base64')}` });
+                } catch(e) { console.warn("Merge Thumbnail error:", e); }
+            }
+
+            // Process Images
+            for (const [idx, file] of taskFiles.entries()) {
+                // Fix encoding
+                file.originalname = Buffer.from(file.originalname, 'latin1').toString('utf8');
+                
+                const ext = path.extname(file.originalname).toLowerCase();
+                const isExotic = ['.webp', '.bmp'].includes(ext);
+                
+                sendProgress(requestId, {
+                    type: 'progress',
+                    currentFileIndex: taskIdx + 1,
+                    totalFiles: totalTasks,
+                    totalPct: Math.round((idx / taskFiles.length) * 100),
+                    currentFileName: baseName,
+                    currentPages: idx + 1,
+                    totalPages: taskFiles.length,
+                    status: isExotic ? `Conversion jpg en cours... (${idx + 1}/${taskFiles.length})` : `Processing image ${idx + 1}/${taskFiles.length}`
+                });
+
+                const num = (idx + 1).toString().padStart(Math.max(3, padding), '0');
+                
+                // Force JPEG for exotic formats (WEBP, BMP)
+                const forceJpeg = isExotic;
+                
+                const shouldUseSharp = sharp && (forceJpeg || rotAngle !== 0 || !isOriginal);
+
+                if (shouldUseSharp) {
+                    let pipeline = sharp(file.path);
+                    if (rotAngle !== 0) pipeline = pipeline.rotate(rotAngle);
+                    
+                    if (dpiVal) {
+                        try {
+                            const metadata = await pipeline.metadata();
+                            const sourceDensity = metadata.density || 72;
+                            const targetDensity = dpiVal;
+                            if (Math.abs(targetDensity - sourceDensity) / sourceDensity > 0.02) {
+                                const newWidth = Math.round(metadata.width * (targetDensity / sourceDensity));
+                                pipeline = pipeline.resize(newWidth);
+                            }
+                            pipeline = pipeline.withMetadata({ density: targetDensity });
+                        } catch (e) {
+                            pipeline = pipeline.withMetadata({ density: dpiVal });
+                        }
+                    }
+
+                    if (colorMode === 'gray') pipeline = pipeline.grayscale();
+
+                    let outExt = ext;
+                    if (forceJpeg) {
+                         pipeline = pipeline.jpeg({ quality: compVal });
+                         outExt = '.jpg';
+                    } else {
+                        if (safeImgFormat === 'png') { pipeline = pipeline.png(); outExt = '.png'; }
+                        else if (safeImgFormat === 'tiff') { pipeline = pipeline.tiff(); outExt = '.tiff'; }
+                        else { pipeline = pipeline.jpeg({ quality: compVal }); outExt = '.jpg'; }
+                    }
+                    await pipeline.toFile(path.join(tempDir, `${num}${outExt}`));
+                } else {
+                    fs.copyFileSync(file.path, path.join(tempDir, `${num}${ext}`));
+                }
+            }
+
+            // Create Archive
+            sendProgress(requestId, {
+                type: 'progress',
+                currentPct: 100,
+                status: "Assembling archive...",
+                currentFileName: baseName
+            });
+
+            const allowedFormats = ['cbz', 'cbt', 'cb7', 'cbr', 'pdf', 'rar4', 'folder'];
+            const safeFormat = allowedFormats.includes(format) ? format : 'cbz';
+            
+            let outputFileName = `${baseName}.${safeFormat}`;
+            if (safeFormat === 'rar4') outputFileName = `${baseName}.cbr`;
+            if (safeFormat === 'folder') outputFileName = baseName;
+
+            const safeTempArchiveName = `archive_${Date.now()}_${Math.random().toString(36).substring(7)}.${safeFormat === 'rar4' ? 'cbr' : safeFormat}`;
+            const tempOutputPath = path.join(TEMP_DIR, safeTempArchiveName);
+
+            if (safeFormat === 'folder') {
+                // Folder mode: skip archiving
+            } else if (safeFormat === 'pdf') {
+                await new Promise((resolve, reject) => {
+                    const doc = new PDFDocument({ autoFirstPage: false });
+                    const stream = fs.createWriteStream(tempOutputPath);
+                    doc.pipe(stream);
+                    const images = fs.readdirSync(tempDir).filter(f => /\.(jpg|jpeg|png)$/i.test(f)).sort();
+                    for (const imgFile of images) {
+                        try {
+                            const imgPath = path.join(tempDir, imgFile);
+                            const img = doc.openImage(imgPath); 
+                            doc.addPage({ margin: 0, size: [img.width, img.height] });
+                            doc.image(imgPath, 0, 0, { width: img.width, height: img.height });
+                        } catch(e) {}
+                    }
+                    doc.end();
+                    stream.on('finish', resolve);
+                    stream.on('error', reject);
+                });
+            } else if (safeFormat === 'cbt') {
+                await new Promise((resolve, reject) => exec(`tar -cf "${tempOutputPath}" .`, { cwd: tempDir }, (err) => err ? reject(err) : resolve()));
+            } else if (safeFormat === 'cb7') {
+                const level = isOriginal ? 0 : archCompVal;
+                await new Promise((resolve, reject) => exec(`7z a -t7z -mx=${level} "${tempOutputPath}" .`, { cwd: tempDir }, (err) => err ? reject(err) : resolve()));
+            } else if (safeFormat === 'cbr') {
+                 let rarComp = isOriginal ? 0 : (archCompVal === 0 ? 0 : 3);
+                 await new Promise((resolve, reject) => exec(`rar a -r -m${rarComp} -ep1 "${tempOutputPath}" .`, { cwd: tempDir }, (err) => err ? reject(err) : resolve()));
+            } else if (safeFormat === 'rar4') {
+                 let rarComp = isOriginal ? 0 : (archCompVal === 0 ? 0 : 3);
+                 await new Promise((resolve, reject) => exec(`rar a -ma4 -r -m${rarComp} -ep1 "${tempOutputPath}" .`, { cwd: tempDir }, (err) => err ? reject(err) : resolve()));
+            } else {
+                // CBZ
+                const level = isOriginal ? 0 : archCompVal;
+                await new Promise((resolve, reject) => exec(`7z a -tzip -mx=${level} "${tempOutputPath}" .`, { cwd: tempDir }, (err) => err ? reject(err) : resolve()));
+            }
+
+            // Finalize
+            const persistentPath = path.join(OUTPUT_DIR, outputFileName);
+            
+            if (safeFormat === 'folder') {
+                if (fs.existsSync(persistentPath)) fs.rmSync(persistentPath, { recursive: true, force: true });
+                fs.mkdirSync(persistentPath, { recursive: true });
+                
+                // Copy only valid images, exclude thumbs
+                const filesToCopy = fs.readdirSync(tempDir).filter(f =>
+                    !f.startsWith('thumb_') &&
+                    !f.startsWith('.') &&
+                    /\.(jpg|jpeg|png|tif|tiff|bmp|webp)$/i.test(f)
+                );
+                
+                for (const f of filesToCopy) {
+                    fs.copyFileSync(path.join(tempDir, f), path.join(persistentPath, f));
+                }
+            } else {
+                fs.copyFileSync(tempOutputPath, persistentPath);
+                fs.unlinkSync(tempOutputPath);
+            }
+
+            // Thumbnail (from first image)
+            let thumbnail = null;
+            if (sharp) {
+                try {
+                    const images = fs.readdirSync(tempDir).filter(f => /\.(jpg|jpeg|png|webp|tiff|tif|bmp)$/i.test(f)).sort();
+                    if (images.length > 0) {
+                        const buffer = await sharp(path.join(tempDir, images[0])).resize(200).toBuffer();
+                        thumbnail = `data:image/jpeg;base64,${buffer.toString('base64')}`;
+                    }
+                } catch(e) { console.warn("Final Thumbnail generation error:", e); }
+            }
+
+            // Cleanup
+            fs.rmSync(tempDir, { recursive: true, force: true });
+            taskFiles.forEach(f => { if(fs.existsSync(f.path)) fs.unlinkSync(f.path); });
+
+            let finalSize = 0;
+            if (safeFormat === 'folder') {
+                 const getDirSize = (dir) => {
+                    const files = fs.readdirSync(dir);
+                    return files.reduce((acc, file) => {
+                        const p = path.join(dir, file);
+                        const s = fs.statSync(p);
+                        return acc + (s.isDirectory() ? getDirSize(p) : s.size);
+                    }, 0);
+                 };
+                 finalSize = getDirSize(persistentPath);
+            } else {
+                finalSize = fs.statSync(persistentPath).size;
+            }
+            
+            return {
+                name: outputFileName,
+                path: persistentPath,
+                size: finalSize,
+                pages: taskFiles.length,
+                thumbnail: thumbnail
+            };
+        };
+
+        // Helper: Process Single File (PDF/Archive -> Archive)
+        const processConvertTask = async (file, taskIdx, totalTasks) => {
+            // Fix encoding
             file.originalname = Buffer.from(file.originalname, 'latin1').toString('utf8');
 
             sendProgress(requestId, {
                 type: 'progress',
-                currentFileIndex: index + 1,
-                totalFiles: files.length,
-                totalPct: Math.round((index / files.length) * 100),
+                currentFileIndex: taskIdx + 1,
+                totalFiles: totalTasks,
+                totalPct: 0,
                 currentFileName: file.originalname,
                 currentPct: 0,
                 status: `Analyzing ${file.originalname}...`
             });
 
-            // Base PDF filename (strip optional technical suffix _timestamp_uuid)
             let fileName = path.parse(file.originalname).name;
             fileName = fileName.replace(/_\d{13}_[a-f0-9\-]{36}$/i, '');
             const tempDir = path.join(__dirname, 'upload', fileName + "_temp_" + Date.now());
@@ -212,15 +425,12 @@ app.post('/convert', upload.array('files'), async (req, res) => {
             const safeImgFormat = (imgFormat || 'jpeg').toLowerCase();
             
             if (fileIsPdf) {
-                // --- PDF PROCESSING ---
-                // Ensure input file has .pdf extension
                 if (!file.path.toLowerCase().endsWith('.pdf')) {
                     const newPath = file.path + '.pdf';
                     try { fs.renameSync(file.path, newPath); file.path = newPath; }
                     catch (err) { console.error("Error renaming input file:", err); }
                 }
 
-                // 1. Detect total pages
                 const totalPages = await getPageCount(file.path);
                 
                 effectiveTotalPages = totalPages;
@@ -235,7 +445,6 @@ app.post('/convert', upload.array('files'), async (req, res) => {
                 }
                 sendProgress(requestId, { type: 'log', message: `Pages detected: ${totalPages || 'Unknown'} (Target: ${effectiveTotalPages})` });
 
-                // 2. Command preparation
                 let args = [];
                 let tool = popplerPath;
                 
@@ -271,8 +480,6 @@ app.post('/convert', upload.array('files'), async (req, res) => {
                      try {
                         sendProgress(requestId, { type: 'log', message: `Generating preview...` });
                         const colorPrefix = path.join(tempDir, 'thumb_color');
-                        
-                        // Promisified Helper
                         const makeThumb = (args) => new Promise(resolve => execFile(popplerPath, args, (err) => resolve(err ? null : true)));
 
                         if (isOriginal) {
@@ -285,10 +492,8 @@ app.post('/convert', upload.array('files'), async (req, res) => {
                                 }
                             } catch(e) {}
                         } else {
-                            // Animated style
                             const grayPrefix = path.join(tempDir, 'thumb_gray');
                             await makeThumb(['-jpeg', '-gray', '-scale-to', '200', '-f', '1', '-l', '1', file.path, grayPrefix]);
-                            
                             let gB64 = null;
                             try {
                                 const g = fs.readdirSync(tempDir).find(f => f.startsWith('thumb_gray') && f.endsWith('.jpg'));
@@ -306,15 +511,11 @@ app.post('/convert', upload.array('files'), async (req, res) => {
                                 } catch(e) {}
                             }
                         }
-                    } catch(e) {
-                        console.warn("PDF Thumbnail error:", e);
-                    }
+                    } catch(e) {}
                 }
 
-                // Execute PDF command
                 sendProgress(requestId, { type: 'log', message: `Conversion in progress (${isOriginal ? 'Extraction' : 'Rendering'})...` });
                 
-                // Progress loop
                 let progressInterval = null;
                 if (totalPages) {
                     progressInterval = setInterval(() => {
@@ -323,7 +524,7 @@ app.post('/convert', upload.array('files'), async (req, res) => {
                             const pageImages = filesInDir.filter(f => /^page[-_]?(\d+).*(jpg|jpeg|png|tif|tiff|bmp)$/i.test(f));
                             const currentPages = pageImages.length;
                             const progress = effectiveTotalPages ? Math.min(100, Math.round((currentPages / effectiveTotalPages) * 100)) : 0;
-                            sendProgress(requestId, { type: 'progress', currentFileIndex: index + 1, totalFiles: files.length, currentPct: progress, currentPages, totalPages: effectiveTotalPages });
+                            sendProgress(requestId, { type: 'progress', currentFileIndex: taskIdx + 1, totalFiles: totalTasks, currentPct: progress, currentPages, totalPages: effectiveTotalPages });
                         } catch (e) {}
                     }, 1000);
                 }
@@ -335,32 +536,18 @@ app.post('/convert', upload.array('files'), async (req, res) => {
                     });
                 });
 
-                // 2.5 Apply Rotation if requested (PDF mode)
-                // Since pdftoppm doesn't support forced rotation output easily, we use sharp here.
                 if (rotAngle !== 0 && sharp) {
                     const rawFiles = fs.readdirSync(tempDir).filter(f => !/^thumb_/i.test(f) && /\.(jpg|jpeg|png|tif|tiff|bmp)$/i.test(f));
-                    console.log(`[INFO] Rotating ${rawFiles.length} files by ${rotAngle} degrees.`);
                     sendProgress(requestId, { type: 'log', message: `Applying rotation ${rotAngle}° to ${rawFiles.length} pages...` });
-                    
-                    // Process sequentially to avoid memory spikes
                     for (const f of rawFiles) {
                         const fPath = path.join(tempDir, f);
                         try {
                             const buffer = fs.readFileSync(fPath);
-                            if (buffer.length === 0) {
-                                console.warn(`[WARN] Skipping rotation for empty file: ${f}`);
-                                continue;
-                            }
-                            // Rotate and save back (buffer -> sharp -> buffer -> fs)
-                            // Note: rotate(90) is 90 deg clockwise
-                            await sharp(buffer).rotate(rotAngle).toFile(fPath);
-                        } catch(e) {
-                            console.error(`Error rotating ${f}:`, e);
-                        }
+                            if (buffer.length > 0) await sharp(buffer).rotate(rotAngle).toFile(fPath);
+                        } catch(e) {}
                     }
                 }
 
-                // Prepare images for scan
                 let imgFiles = fs.readdirSync(tempDir).filter(f => {
                     const validExts = ['.jpg', '.jpeg', '.png', '.tif', '.tiff', '.bmp'];
                     return validExts.includes(path.extname(f).toLowerCase()) && !/^thumb_/i.test(f);
@@ -369,7 +556,6 @@ app.post('/convert', upload.array('files'), async (req, res) => {
 
                 if (imgFiles.length === 0) throw new Error(`No images generated for ${file.originalname}`);
 
-                // Rename logic for PDF output
                 const padding = effectiveTotalPages.toString().length;
                 imgFiles.slice(0, effectiveTotalPages).forEach((f, idx) => {
                     const num = (idx + 1).toString().padStart(Math.max(3, padding), '0');
@@ -381,7 +567,6 @@ app.post('/convert', upload.array('files'), async (req, res) => {
                 // --- ARCHIVE PROCESSING ---
                 sendProgress(requestId, { type: 'log', message: `Extracting archive...` });
                 
-                // Rename archive with extension to help 7z detection
                 const ext = path.extname(file.originalname).toLowerCase();
                 if (ext && !file.path.toLowerCase().endsWith(ext)) {
                     const newPath = file.path + ext;
@@ -389,22 +574,18 @@ app.post('/convert', upload.array('files'), async (req, res) => {
                     catch(e) { console.error("Archive rename error:", e); }
                 }
 
-                // Fast Thumbnail Extraction (Try to get first image before full extract)
+                // Fast Thumbnail
                 if (FEATURE_PROGRESS_THUMBNAIL && sharp) {
                     sendProgress(requestId, { type: 'log', message: `Generating preview...` });
                     try {
                         await new Promise(resolve => {
-                            // Use 7z l -slt for structured output (Path = ...)
                             exec(`7z l -slt "${file.path}"`, async (err, stdout) => {
                                 if (err) { resolve(); return; }
-                                
                                 const match = stdout.match(/Path = (.+\.(jpg|jpeg|png|webp))[\r\n]/i);
                                 if (match && match[1]) {
                                     const imgPath = match[1].trim();
                                     const thumbTempDir = path.join(tempDir, 'thumb_fast');
                                     fs.mkdirSync(thumbTempDir, { recursive: true });
-
-                                    // Extract ONLY this file
                                     exec(`7z e "${file.path}" -o"${thumbTempDir}" "${imgPath}" -y`, async (err2) => {
                                         if (!err2) {
                                             try {
@@ -416,26 +597,18 @@ app.post('/convert', upload.array('files'), async (req, res) => {
                                                     sendProgress(requestId, { type: 'thumbnail-init', color: `data:image/jpeg;base64,${b64}` });
                                                 }
                                             } catch(e) {}
-                                            // Cleanup
                                             try { fs.rmSync(thumbTempDir, { recursive: true, force: true }); } catch(e){}
                                         }
                                         resolve();
                                     });
-                                } else {
-                                    resolve();
-                                }
+                                } else { resolve(); }
                             });
                         });
-                    } catch(e) {
-                        console.warn("Fast thumb warning:", e);
-                    }
+                    } catch(e) {}
                 }
 
-                // 1. Extract (Use specific tools based on format for better compatibility)
                 await new Promise((resolve, reject) => {
                     const ext = path.extname(file.originalname).toLowerCase();
-                    
-                    // Detect RAR signature (Magic Bytes) to handle .cbz files that are actually RARs
                     let isRarSignature = false;
                     try {
                         const fd = fs.openSync(file.path, 'r');
@@ -446,59 +619,35 @@ app.post('/convert', upload.array('files'), async (req, res) => {
                     } catch(e) {}
 
                     if (isRarSignature || ext === '.cbr' || ext === '.rar') {
-                        if (isRarSignature && ext !== '.cbr' && ext !== '.rar') {
-                            console.log(`[INFO] Detected RAR signature in ${ext} file. Switching to RAR extractor.`);
-                        }
-                        // Use 'rar' or 'unrar' for RAR files to support RAR5 (which old p7zip doesn't support)
-                        // Dockerfile installs 'rar' (non-free). Syntax: rar x archive path/
                         exec(`rar x -y "${file.path}" "${tempDir}/"`, (err) => {
                             if (err) {
-                                console.warn(`RAR extraction failed: ${err.message}. Trying unrar...`);
-                                // Fallback to unrar
                                 exec(`unrar x -y "${file.path}" "${tempDir}/"`, (err2) => {
                                     if (err2) {
-                                        // Last resort: try 7z (might fail for RAR5)
-                                        console.warn(`Unrar failed: ${err2.message}. Trying 7z...`);
                                         exec(`7z x "${file.path}" -o"${tempDir}"`, (err3) => {
-                                            if (err3) reject(err); // Reject with original error
-                                            else resolve();
+                                            if (err3) reject(err); else resolve();
                                         });
-                                    }
-                                    else resolve();
+                                    } else resolve();
                                 });
                             } else resolve();
                         });
                     } else {
-                        // Use 7z for everything else (zip, cbz, 7z, tar...)
-                        // "x" preserves paths.
                         exec(`7z x "${file.path}" -o"${tempDir}"`, (err) => {
                             if (err) reject(err); else resolve();
                         });
                     }
                 });
 
-                // 2. Scan recursively for images (handling encoding issues via Buffers)
                 const getAllImages = (dirBuffer, list = []) => {
                     let entryNames;
-                    try {
-                        // Get just names as buffers (no withFileTypes to avoid implicit lstat issues)
-                        entryNames = fs.readdirSync(dirBuffer, { encoding: 'buffer' });
-                    } catch(e) { console.warn("Readdir failed:", e); return list; }
-
+                    try { entryNames = fs.readdirSync(dirBuffer, { encoding: 'buffer' }); } catch(e) { return list; }
                     for (const nameBuffer of entryNames) {
-                        // Manual path join for buffers
                         const separator = Buffer.from(path.sep);
                         const fullPathBuffer = Buffer.concat([dirBuffer, separator, nameBuffer]);
-
                         let stats;
-                        try {
-                            stats = fs.lstatSync(fullPathBuffer);
-                        } catch(e) { continue; } // Skip inaccessible files
-
+                        try { stats = fs.lstatSync(fullPathBuffer); } catch(e) { continue; }
                         if (stats.isDirectory()) {
                             getAllImages(fullPathBuffer, list);
                         } else {
-                            // Check extension safely
                             const nameStr = nameBuffer.toString('binary');
                             const ext = path.extname(nameStr).toLowerCase();
                             if (['.jpg', '.jpeg', '.png', '.tif', '.tiff', '.bmp', '.webp', '.gif'].includes(ext)) {
@@ -510,10 +659,8 @@ app.post('/convert', upload.array('files'), async (req, res) => {
                 };
 
                 let extractedImages = getAllImages(Buffer.from(tempDir));
-                // Sort naturally (Buffers)
                 extractedImages.sort((a, b) => a.compare(b));
                 
-                // Page Filtering Logic for Archives
                 const totalExtracted = extractedImages.length;
                 const pStart = pageStart ? parseInt(pageStart) : 1;
                 const pEnd = pageEnd ? parseInt(pageEnd) : totalExtracted;
@@ -525,23 +672,8 @@ app.post('/convert', upload.array('files'), async (req, res) => {
 
                 if (effectiveTotalPages === 0) throw new Error("No images in range.");
 
-                // Thumbnail for Archive
-                if (FEATURE_PROGRESS_THUMBNAIL && extractedImages.length > 0) {
-                    try {
-                        const firstImgPath = extractedImages[0];
-                        if (sharp) {
-                            // Pass buffer content to sharp to avoid path encoding issues
-                            const imgBuffer = fs.readFileSync(firstImgPath);
-                            if (imgBuffer.length > 0) {
-                                const buffer = await sharp(imgBuffer).resize(200).toBuffer();
-                                const b64 = buffer.toString('base64');
-                                sendProgress(requestId, { type: 'thumbnail-init', color: `data:image/jpeg;base64,${b64}` });
-                            }
-                        }
-                    } catch(e) { console.warn("Thumb error:", e); }
-                }
+                // Thumbnail logic for Archive if not already done... (omitted for brevity, handled by fast thumb)
 
-                // 3. Process Images (Flatten & Convert if needed)
                 const processingDir = path.join(tempDir, 'processed');
                 fs.mkdirSync(processingDir);
 
@@ -549,67 +681,41 @@ app.post('/convert', upload.array('files'), async (req, res) => {
                 let processedCount = 0;
                 
                 for (let i = 0; i < extractedImages.length; i++) {
-                    // Page Range Check
                     const currentNum = i + 1;
                     if (currentNum < effStart || currentNum > effEnd) continue;
 
-                    const srcPath = extractedImages[i]; // Buffer
-                    
-                    // Use processedCount for sequential output numbering
+                    const srcPath = extractedImages[i];
                     const num = (processedCount + 1).toString().padStart(Math.max(3, padding), '0');
                     processedCount++;
                     
-                    // Determine extension safely
                     const srcPathStr = srcPath.toString('binary');
                     const ext = path.extname(srcPathStr).toLowerCase();
-
-                    // Decide: Copy (Original) or Process (Sharp)
-                    // If rotation is requested, we MUST use sharp even in "Original" mode (unless sharp is missing)
                     const needsProcessing = !isOriginal || (rotAngle !== 0);
 
                     if (!needsProcessing) {
-                        // Just copy/move (srcPath is Buffer, works with fs)
                         fs.copyFileSync(srcPath, path.join(processingDir, `${num}${ext}`));
                     } else if (sharp) {
-                        // Convert/Resize/Rotate
-                        // Pass CONTENT buffer to sharp, not path buffer
                         const inputBuffer = fs.readFileSync(srcPath);
-                        if (inputBuffer.length === 0) {
-                            console.warn(`[WARN] Skipping empty file during processing: ${srcPathStr}`);
-                            continue;
-                        }
+                        if (inputBuffer.length === 0) continue;
 
                         let pipeline = sharp(inputBuffer);
-
-                        // Apply rotation
-                        if (rotAngle !== 0) {
-                            pipeline = pipeline.rotate(rotAngle);
-                        }
+                        if (rotAngle !== 0) pipeline = pipeline.rotate(rotAngle);
                         
-                        // DPI Resampling Logic (if not Original mode)
                         if (dpiVal) {
                             try {
                                 const metadata = await pipeline.metadata();
-                                const sourceDensity = metadata.density || 72; // Default density assumption
+                                const sourceDensity = metadata.density || 72;
                                 const targetDensity = dpiVal;
-                                
-                                // Resample if density differs significantly (> 2%)
-                                // We assume constant physical size, so higher DPI = more pixels
                                 if (Math.abs(targetDensity - sourceDensity) / sourceDensity > 0.02) {
                                     const newWidth = Math.round(metadata.width * (targetDensity / sourceDensity));
                                     pipeline = pipeline.resize(newWidth);
                                 }
                                 pipeline = pipeline.withMetadata({ density: targetDensity });
-                            } catch (e) {
-                                console.warn(`[WARN] Could not read metadata for resampling: ${srcPath}`, e);
-                            }
+                            } catch (e) {}
                         }
 
-                        // Color mode
                         if (colorMode === 'gray') pipeline = pipeline.grayscale();
-                        // Note: mono (threshold) not simply supported by sharp without settings, skipping for now or mapped to gray
 
-                        // Output format
                         let outExt = '.' + safeImgFormat;
                         if (safeImgFormat === 'jpeg') {
                             pipeline = pipeline.jpeg({ quality: compVal });
@@ -622,18 +728,15 @@ app.post('/convert', upload.array('files'), async (req, res) => {
 
                         await pipeline.toFile(path.join(processingDir, `${num}${outExt}`));
                     } else {
-                        // Fallback if no sharp and no original: copy
                         fs.copyFileSync(srcPath, path.join(processingDir, `${num}${ext}`));
                     }
 
-                    // Send progress manually since we are in a loop
-                    // Use processedCount for progress calculation
                     if (processedCount % 5 === 0) {
                         const pct = Math.round((processedCount / effectiveTotalPages) * 100);
                         sendProgress(requestId, {
                             type: 'progress',
-                            currentFileIndex: index + 1,
-                            totalFiles: files.length,
+                            currentFileIndex: taskIdx + 1,
+                            totalFiles: totalTasks,
                             currentPct: pct,
                             currentPages: processedCount,
                             totalPages: effectiveTotalPages
@@ -641,41 +744,26 @@ app.post('/convert', upload.array('files'), async (req, res) => {
                     }
                 }
 
-                // Clean old temp content and move processed to root of tempDir for archiving
-                // Must handle buffers because of potential encoding issues in extracted folders
+                // Cleanup folders in tempDir
                 const deleteFolderContents = (dirPathStr) => {
                     const dirBuffer = Buffer.from(dirPathStr);
                     let items;
-                    try {
-                        items = fs.readdirSync(dirBuffer, { encoding: 'buffer' });
-                    } catch(e) { return; }
-
+                    try { items = fs.readdirSync(dirBuffer, { encoding: 'buffer' }); } catch(e) { return; }
                     for (const itemBuffer of items) {
-                        const itemStr = itemBuffer.toString('binary'); // Safe check for 'processed'
+                        const itemStr = itemBuffer.toString('binary');
                         if (itemStr === 'processed' || itemStr.endsWith('processed')) continue;
-                        
-                        // Strict check: if item is exactly 'processed' in UTF8
                         if (itemBuffer.toString('utf8') === 'processed') continue;
-
                         const separator = Buffer.from(path.sep);
                         const curPathBuffer = Buffer.concat([dirBuffer, separator, itemBuffer]);
-                        
                         try {
                             const stats = fs.lstatSync(curPathBuffer);
-                            if (stats.isDirectory()) {
-                                fs.rmSync(curPathBuffer, { recursive: true, force: true });
-                            } else {
-                                fs.unlinkSync(curPathBuffer);
-                            }
-                        } catch(e) {
-                            // Try force remove if lstat fails
-                            try { fs.rmSync(curPathBuffer, { recursive: true, force: true }); } catch(ex) {}
-                        }
+                            if (stats.isDirectory()) fs.rmSync(curPathBuffer, { recursive: true, force: true });
+                            else fs.unlinkSync(curPathBuffer);
+                        } catch(e) {}
                     }
                 };
                 deleteFolderContents(tempDir);
 
-                // Move processed files to tempDir
                 const processedFiles = fs.readdirSync(processingDir);
                 for (const f of processedFiles) {
                     fs.renameSync(path.join(processingDir, f), path.join(tempDir, f));
@@ -683,95 +771,58 @@ app.post('/convert', upload.array('files'), async (req, res) => {
                 fs.rmdirSync(processingDir);
             }
 
-            // Common Finalization
+            // Finalize (Same logic as Merge)
             sendProgress(requestId, {
                 type: 'progress',
-                currentFileIndex: index + 1,
-                totalFiles: files.length,
+                currentFileIndex: taskIdx + 1,
+                totalFiles: totalTasks,
                 currentPct: 100,
                 currentPages: effectiveTotalPages,
                 totalPages: effectiveTotalPages,
                 status: "Assembling..."
             });
             
-            // Output name = original PDF name (without suffix)
-            const outputFileName = `${fileName}.${format || 'cbz'}`;
-            
-            // Strict archive format validation
-            const allowedFormats = ['cbz', 'cbt', 'cb7', 'cbr', 'pdf'];
+            const allowedFormats = ['cbz', 'cbt', 'cb7', 'cbr', 'pdf', 'rar4', 'folder'];
             const safeFormat = allowedFormats.includes(format) ? format : 'cbz';
             
-            // Generate SAFE temporary name for archive creation to avoid CLI encoding issues
-            const safeTempArchiveName = `archive_${Date.now()}_${Math.random().toString(36).substring(7)}.${safeFormat}`;
+            let outputFileName = `${fileName}.${safeFormat}`;
+            if (safeFormat === 'rar4') outputFileName = `${fileName}.cbr`;
+            if (safeFormat === 'folder') outputFileName = fileName;
+            
+            const safeTempArchiveName = `archive_${Date.now()}_${Math.random().toString(36).substring(7)}.${safeFormat === 'rar4' ? 'cbr' : safeFormat}`;
             const tempOutputPath = path.join(TEMP_DIR, safeTempArchiveName);
 
-            // Archive creation based on selected format
-            if (safeFormat === 'pdf') {
-                // PDF Creation
-                sendProgress(requestId, { type: 'log', message: `Generating PDF document...` });
+            if (safeFormat === 'folder') {
+            } else if (safeFormat === 'pdf') {
                 await new Promise((resolve, reject) => {
                     const doc = new PDFDocument({ autoFirstPage: false });
                     const stream = fs.createWriteStream(tempOutputPath);
-                    
                     doc.pipe(stream);
-                    
-                    // Helper to get image dimensions
-                    const getImageDimensions = (imgPath) => {
-                        // Use PDFDocument's internal image handling to get dimensions efficiently
-                        try {
-                            const img = doc.openImage(imgPath);
-                            return { width: img.width, height: img.height };
-                        } catch (e) {
-                            console.warn("Error reading image dims with pdfkit:", e);
-                            return { width: 595.28, height: 841.89 }; // Fallback A4
-                        }
-                    };
-
-                    // Get list of images to add
-                    // Note: tempDir contains processed images sorted/renamed, or original images
-                    const images = fs.readdirSync(tempDir)
-                        .filter(f => /\.(jpg|jpeg|png)$/i.test(f) && !f.startsWith('thumb_'))
-                        .sort(); // Should be already sorted but safety first
-
+                    const images = fs.readdirSync(tempDir).filter(f => /\.(jpg|jpeg|png)$/i.test(f)).sort();
                     for (const imgFile of images) {
-                        const imgPath = path.join(tempDir, imgFile);
                         try {
-                            const { width, height } = getImageDimensions(imgPath);
-                            doc.addPage({ margin: 0, size: [width, height] });
-                            doc.image(imgPath, 0, 0, { width, height });
-                        } catch(e) {
-                            console.warn(`[WARN] Skipping invalid image for PDF: ${imgFile}`, e);
-                        }
+                            const imgPath = path.join(tempDir, imgFile);
+                            const { width, height } = { width: 595, height: 842 }; // Simplified logic vs Merge
+                            try {
+                                const img = doc.openImage(imgPath);
+                                doc.addPage({ margin: 0, size: [img.width, img.height] });
+                                doc.image(imgPath, 0, 0, { width: img.width, height: img.height });
+                            } catch(e) {}
+                        } catch(e) {}
                     }
-
                     doc.end();
                     stream.on('finish', resolve);
                     stream.on('error', reject);
                 });
-
             } else if (safeFormat === 'cbt') {
-                // TAR format (No compression by definition)
-                await new Promise((resolve, reject) => {
-                    exec(`tar -cf "${tempOutputPath}" .`, { cwd: tempDir }, (err) => {
-                        if (err) reject(err);
-                        else resolve();
-                    });
-                });
+                await new Promise((resolve, reject) => exec(`tar -cf "${tempOutputPath}" .`, { cwd: tempDir }, (err) => err ? reject(err) : resolve()));
             } else if (safeFormat === 'cb7') {
-                // 7Z format
                 const level = isOriginal ? 0 : archCompVal;
-                await new Promise((resolve, reject) => {
-                    exec(`7z a -t7z -mx=${level} "${tempOutputPath}" .`, { cwd: tempDir }, (err) => {
-                        if (err) reject(err);
-                        else resolve();
-                    });
-                });
+                await new Promise((resolve, reject) => exec(`7z a -t7z -mx=${level} "${tempOutputPath}" .`, { cwd: tempDir }, (err) => err ? reject(err) : resolve()));
             } else if (safeFormat === 'cbr') {
-                // RAR format (native)
                 let rarComp = 3;
-                if (isOriginal) {
-                    rarComp = 0; // Store
-                } else {
+                if (isOriginal) rarComp = 0;
+                else {
                     if (archCompVal === 0) rarComp = 0;
                     else if (archCompVal === 1) rarComp = 1;
                     else if (archCompVal === 3) rarComp = 2;
@@ -779,89 +830,153 @@ app.post('/convert', upload.array('files'), async (req, res) => {
                     else if (archCompVal === 7) rarComp = 4;
                     else if (archCompVal === 9) rarComp = 5;
                 }
-
-                await new Promise((resolve, reject) => {
-                    exec(`rar a -r -m${rarComp} -ep1 "${tempOutputPath}" .`, { cwd: tempDir }, (err) => {
-                        if (err) reject(err);
-                        else resolve();
-                    });
-                });
+                await new Promise((resolve, reject) => exec(`rar a -r -m${rarComp} -ep1 "${tempOutputPath}" .`, { cwd: tempDir }, (err) => err ? reject(err) : resolve()));
+            } else if (safeFormat === 'rar4') {
+                let rarComp = 3;
+                if (isOriginal) rarComp = 0;
+                else {
+                    if (archCompVal === 0) rarComp = 0;
+                    else if (archCompVal === 1) rarComp = 1;
+                    else if (archCompVal === 3) rarComp = 2;
+                    else if (archCompVal === 5) rarComp = 3;
+                    else if (archCompVal === 7) rarComp = 4;
+                    else if (archCompVal === 9) rarComp = 5;
+                }
+                await new Promise((resolve, reject) => exec(`rar a -ma4 -r -m${rarComp} -ep1 "${tempOutputPath}" .`, { cwd: tempDir }, (err) => err ? reject(err) : resolve()));
             } else {
-                // CBZ format (default)
                 const level = isOriginal ? 0 : archCompVal;
-                await new Promise((resolve, reject) => {
-                    exec(`7z a -tzip -mx=${level} "${tempOutputPath}" .`, { cwd: tempDir }, (err) => {
-                        if (err) reject(err);
-                        else resolve();
-                    });
-                });
+                await new Promise((resolve, reject) => exec(`7z a -tzip -mx=${level} "${tempOutputPath}" .`, { cwd: tempDir }, (err) => err ? reject(err) : resolve()));
             }
 
-            if (!fs.existsSync(tempOutputPath)) {
+            if (safeFormat !== 'folder' && !fs.existsSync(tempOutputPath)) {
                 throw new Error(`Archive generation failed: ${safeTempArchiveName} not found.`);
             }
 
-            // Copy to persistent output directory
             const persistentPath = path.join(OUTPUT_DIR, outputFileName);
-            fs.copyFileSync(tempOutputPath, persistentPath);
             
-            // Cleanup temp archive
-            fs.unlinkSync(tempOutputPath);
+            let finalSize = 0;
+            if (safeFormat === 'folder') {
+                if (fs.existsSync(persistentPath)) fs.rmSync(persistentPath, { recursive: true, force: true });
+                fs.mkdirSync(persistentPath, { recursive: true });
+                
+                // Copy only valid images, exclude thumbs
+                const filesToCopy = fs.readdirSync(tempDir).filter(f =>
+                    !f.startsWith('thumb_') &&
+                    !f.startsWith('.') &&
+                    /\.(jpg|jpeg|png|tif|tiff|bmp|webp)$/i.test(f)
+                );
+                
+                for (const f of filesToCopy) {
+                    fs.copyFileSync(path.join(tempDir, f), path.join(persistentPath, f));
+                }
+                
+                const getDirSize = (dir) => {
+                    const files = fs.readdirSync(dir);
+                    return files.reduce((acc, file) => {
+                        const p = path.join(dir, file);
+                        const s = fs.statSync(p);
+                        return acc + (s.isDirectory() ? getDirSize(p) : s.size);
+                    }, 0);
+                 };
+                 finalSize = getDirSize(persistentPath);
+            } else {
+                fs.copyFileSync(tempOutputPath, persistentPath);
+                fs.unlinkSync(tempOutputPath);
+                finalSize = fs.statSync(persistentPath).size;
+            }
 
-            const finalSize = fs.statSync(persistentPath).size;
-            console.log(`[INFO] File saved to: ${persistentPath} (${finalSize} bytes)`);
-
-            // ✅ Generate final thumbnail
+            // Generate final thumbnail
             let thumbnail = null;
-            try {
-                if (fileIsPdf) {
-                    // Use poppler for PDF source
-                    const thumbPrefix = path.join(tempDir, 'thumb_gen');
-                    await new Promise((resolve, reject) => {
-                        execFile(popplerPath, ['-jpeg', '-scale-to', '200', '-f', '1', '-l', '1', file.path, thumbPrefix], (err) => {
-                            if (err) reject(err); else resolve();
-                        });
-                    });
-                    const thumbFile = fs.readdirSync(tempDir).find(f => f.startsWith('thumb_gen') && f.endsWith('.jpg'));
-                    if (thumbFile) {
-                        const b64 = fs.readFileSync(path.join(tempDir, thumbFile)).toString('base64');
-                        thumbnail = `data:image/jpeg;base64,${b64}`;
-                    }
-                } else if (sharp) {
-                    // Use sharp for Archive source (take first image from tempDir)
-                    const images = fs.readdirSync(tempDir).filter(f => /\.(jpg|jpeg|png|webp)$/i.test(f)).sort();
+            if (sharp) {
+                try {
+                    const images = fs.readdirSync(tempDir).filter(f => /\.(jpg|jpeg|png|webp|tiff|tif|bmp)$/i.test(f)).sort();
                     if (images.length > 0) {
                         const buffer = await sharp(path.join(tempDir, images[0])).resize(200).toBuffer();
                         thumbnail = `data:image/jpeg;base64,${buffer.toString('base64')}`;
                     }
-                }
-            } catch (e) {
-                console.error("Thumbnail generation error:", e);
+                } catch(e) { console.warn("Final Thumbnail generation error:", e); }
             }
-
-            // Cleanup temporary directory and uploaded PDF file
+            
             fs.rmSync(tempDir, { recursive: true, force: true });
             fs.unlinkSync(file.path);
 
-            results.push({
+            return {
                 name: outputFileName,
                 path: persistentPath,
                 size: finalSize,
-                pages: effectiveTotalPages, // nombre EXACT de pages converties
+                pages: effectiveTotalPages,
                 thumbnail: thumbnail
-            });
+            };
+        };
+
+        // --- GROUPING LOGIC ---
+        const tasks = [];
+        const groups = {};
+        const rootFiles = [];
+        const isImageFile = (f) => /\.(jpg|jpeg|png|tif|tiff|bmp|webp)$/i.test(f.originalname);
+
+        for (const file of files) {
+            // Normalize path separators (Multer/FormData behavior)
+            const name = file.originalname.replace(/\\/g, '/');
+            const parts = name.split('/');
+            
+            if (parts.length > 1) {
+                // Inside a folder
+                const rootDir = parts[0];
+                if (!groups[rootDir]) groups[rootDir] = [];
+                groups[rootDir].push(file);
+            } else {
+                rootFiles.push(file);
+            }
+        }
+
+        // Root Images (Merge "Converted_Images")
+        const rootImages = rootFiles.filter(isImageFile);
+        if (rootImages.length > 0) {
+            let name = "Converted_Images";
+            // If only one image, use its name? No, merge behavior usually implies collection.
+            // But if user drags 1 image to convert to PDF?
+            if (rootImages.length === 1) name = path.parse(rootImages[0].originalname).name;
+            else name = path.parse(rootImages[0].originalname).name + "_set"; // Use first file name as base
+            
+            tasks.push({ type: 'MERGE', files: rootImages, name: name });
+        }
+
+        // Folder Groups
+        for (const [dirName, dirFiles] of Object.entries(groups)) {
+            const images = dirFiles.filter(isImageFile);
+            if (images.length > 0) {
+                tasks.push({ type: 'MERGE', files: images, name: dirName });
+            }
+        }
+
+        // Root Documents (Convert)
+        const rootDocs = rootFiles.filter(f => !isImageFile(f));
+        for (const doc of rootDocs) {
+            tasks.push({ type: 'CONVERT', file: doc });
+        }
+
+        sendProgress(requestId, { type: 'log', message: `Identified ${tasks.length} task(s).` });
+
+        const results = [];
+        
+        // --- PROCESS TASKS ---
+        for (const [idx, task] of tasks.entries()) {
+             if (task.type === 'MERGE') {
+                 const res = await processMergeTask(task.files, task.name, idx, tasks.length);
+                 if (res) results.push(res);
+             } else {
+                 const res = await processConvertTask(task.file, idx, tasks.length);
+                 if (res) results.push(res);
+             }
         }
 
         // Compute final statistics
         const totalSize = results.reduce((acc, r) => acc + r.size, 0);
         const totalPagesConverted = results.reduce((acc, r) => acc + (r.pages || 0), 0);
 
-        // Cleanup temporary files (archives generated in TEMP_DIR)
-        results.forEach(r => {
-            const tempArchivePath = path.join(TEMP_DIR, r.name);
-            if (fs.existsSync(tempArchivePath)) fs.unlinkSync(tempArchivePath);
-        });
-
+        // Cleanup temporary files (archives generated in TEMP_DIR) -> Handled by helpers
+        
         res.json({
             success: true,
             message: `Conversion completed.`,

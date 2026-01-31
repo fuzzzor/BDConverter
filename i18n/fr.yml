@@ -3,14 +3,19 @@ app:
   subtitle: "Ultimate Manga/Comic Converter"
 
 dropzone:
-  title: "Glisser-déposer vos PDF ici"
-  formats: "Format accepté :"
-  browse: "(ou cliquez pour parcourir)"
+  title: "Glisser-déposer vos fichiers pris en charge ICI"
+  formats: "Formats acceptés :"
+  directories: "Répertoires pris en charge"
+  browse_files: "(cliquez pour fichiers)"
+  browse_folder: "(ou choisir un dossier)"
   analyzing: "Analyse : {current} / {total}..."
   ready: "{count} fichier(s) prêt(s)"
   pages: "{pages} pages • {size} MB"
   size_only: "{size} MB"
   change: "Cliquez ou déposez pour changer"
+  add_more: "Cliquez ou déposez pour ajouter"
+  clear: "Tout effacer"
+  tooltip: "Glissez vos fichiers et répertoires ici (PDF, Images, Archives)"
 
 controls:
   dpi:
@@ -42,6 +47,15 @@ controls:
   output:
     label: "Format d'archive & Compression"
 
+  format_options:
+    cbz: ".cbz (Zip)"
+    cbr: ".cbr (RAR5)"
+    rar4: ".cbr (RAR4)"
+    cbt: ".cbt (Tar)"
+    cb7: ".cb7 (7-Zip)"
+    pdf: ".pdf (Document)"
+    folder: "Répertoire (Images)"
+
   archive_compression:
     store: "Stockage (Aucune)"
     fastest: "La plus rapide"
@@ -71,6 +85,8 @@ progress:
   file: "Fichier n° {current} / {total}"
   assembling: "Assemblage…"
   processing: "Traitement…"
+  processing_image: "Traitement image"
+  converting_jpg: "Conversion JPG en cours..."
 
 summary:
   title: "🎉 Conversion terminée !"
