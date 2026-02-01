@@ -87,6 +87,8 @@ function applyTranslations(dict) {
     'archiveCompression': 'tooltips.archive_compression',
     'rotation': 'tooltips.rotation',
     '.compression-box': 'tooltips.quality',
+    'splitDouble': 'tooltips.split',
+    'readingDir': 'tooltips.reading',
     'drop-zone': 'dropzone.tooltip'
   };
 

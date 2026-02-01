@@ -127,3 +127,5 @@ tooltips:
   archive_compression: "Niveau de compression de l'archive."
   rotation: "Rotation manuelle des pages."
   quality: "Qualité de l'image JPEG (80% est un bon compromis)."
+  split: "Divise automatiquement les images larges (paysage) en deux pages simples."
+  reading: "Ordre des pages après découpage."
