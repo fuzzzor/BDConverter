@@ -395,7 +395,7 @@ async function handleFiles(fileList) {
   
   // Recalculate global stats
   let totalSize = selectedFiles.reduce((acc, f) => acc + f.size, 0);
-  let hasArchives = selectedFiles.some(f => f.name.match(/\.(cbz|cbr|zip|rar|7z|tar)$/i));
+  let hasArchives = false;
 
   for (const [i, file] of files.entries()) {
     if (loadingStatus) {
