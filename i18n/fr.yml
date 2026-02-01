@@ -21,11 +21,20 @@ controls:
   dpi:
     label: "Résolution (DPI)"
     original: "Original (Extraction native)"
+    web: "72 DPI (Web)"
     standard: "150 DPI (Standard)"
     high: "225 DPI (Haute)"
     very_high: "300 DPI (Très Haute)"
     ultra: "450 DPI (Ultra)"
     archive: "600 DPI (Ultra Haute)"
+
+  resize:
+    label: "Redimensionner (Largeur Max)"
+    original: "Taille Originale"
+    sd: "1280px (SD / Liseuse)"
+    hd_plus: "1600px (HD+)"
+    fhd: "1920px (Full HD / iPad)"
+    2k: "2560px (2K / Retina)"
 
   color_mode:
     label: "Mode Couleur"
@@ -75,7 +84,19 @@ controls:
     light: "Léger"
     max: "Qualité Max"
 
-buttons:
+  split:
+    label: "Découper pages doubles"
+    options:
+      no: "Non"
+      auto: "Auto (détecter et découper)"
+
+  reading:
+    label: "Sens de lecture"
+    direction:
+      ltr: "Gauche -> Droite (BD)"
+      rtl: "Droite -> Gauche (Manga)"
+
+  buttons:
   convert: "Convertir fichier(s)"
   starting: "Démarrage..."
   close: "Fermer"
@@ -98,6 +119,7 @@ summary:
 
 tooltips:
   dpi: "Choisissez la résolution. 'Original' extrait sans modification (rapide). Les autres options recalculent les pages."
+  resize: "Réduit la largeur de l'image pour s'adapter à des appareils spécifiques."
   color_mode: "Change le mode couleur. Ignoré en mode 'Original'."
   page_range: "Définit les pages à convertir (laisser vide pour tout)."
   image_format: "Format des images à l'intérieur de l'archive."

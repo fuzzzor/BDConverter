@@ -15,6 +15,7 @@ Features
 - **Image Processing**:
   - Automatic conversion of WEBP/BMP to JPG (preserving quality settings).
   - Smart resizing when DPI is specified.
+  - **Auto-Split Double Pages**: Automatically detects landscape scans (width > height * 1.2) and splits them into two vertical pages. Supports Left-to-Right (Comics) and Right-to-Left (Manga) reading directions.
 - **New Output Formats**:
   - CBR (RAR4) for legacy compatibility.
   - Directory (Folder extraction) to extract images without archiving.

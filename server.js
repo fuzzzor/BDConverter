@@ -164,9 +164,10 @@ app.post('/analyze', upload.single('file'), (req, res) => {
 
 // Route principale de conversion
 app.post('/convert', upload.array('files'), async (req, res) => {
-    const { dpi, colorMode, pageStart, pageEnd, format, compression, archiveCompression, imgFormat, requestId, rotation } = req.body;
+    const { dpi, maxWidth, colorMode, pageStart, pageEnd, format, compression, archiveCompression, imgFormat, requestId, rotation, splitDouble, readingDir } = req.body;
     const isOriginal = dpi === 'original';
     const rotAngle = rotation ? parseInt(rotation) : 0;
+    const maxW = maxWidth ? parseInt(maxWidth) : null;
     const files = req.files;
 
     if (!files || files.length === 0) {
@@ -249,7 +250,16 @@ app.post('/convert', upload.array('files'), async (req, res) => {
                     let pipeline = sharp(file.path);
                     if (rotAngle !== 0) pipeline = pipeline.rotate(rotAngle);
                     
-                    if (dpiVal) {
+                    // Resize logic (MaxWidth takes precedence over DPI-based resizing)
+                    if (maxW && maxW > 0) {
+                        try {
+                            const metadata = await pipeline.metadata();
+                            if (metadata.width > maxW) {
+                                pipeline = pipeline.resize({ width: maxW, withoutEnlargement: true });
+                            }
+                            if (dpiVal) pipeline = pipeline.withMetadata({ density: dpiVal });
+                        } catch (e) {}
+                    } else if (dpiVal) {
                         try {
                             const metadata = await pipeline.metadata();
                             const sourceDensity = metadata.density || 72;
@@ -457,6 +467,10 @@ app.post('/convert', upload.array('files'), async (req, res) => {
                 } else {
                     tool = popplerPath;
                     args = ['-r', dpiVal.toString()];
+                    if (maxW && maxW > 0) {
+                        // Use scale-to-x for PDF resizing (keeps aspect ratio)
+                        args.push('-scale-to-x', maxW.toString(), '-scale-to-y', '-1');
+                    }
                     if (safeImgFormat === 'png') {
                         args.push('-png');
                         if (colorMode === 'gray') args.push('-gray');
@@ -556,11 +570,59 @@ app.post('/convert', upload.array('files'), async (req, res) => {
 
                 if (imgFiles.length === 0) throw new Error(`No images generated for ${file.originalname}`);
 
-                const padding = effectiveTotalPages.toString().length;
-                imgFiles.slice(0, effectiveTotalPages).forEach((f, idx) => {
+                // Handle optional splitting of landscape (double) pages
+                // If splitDouble==='auto', use Sharp to split wide images into two vertical halves
+                // IMPORTANT: Disable splitting if "Original" mode (dpi='original') is active
+                let expandedFiles = [];
+                if (splitDouble === 'auto' && sharp && !isOriginal) {
+                    for (let i = 0; i < Math.min(imgFiles.length, effectiveTotalPages); i++) {
+                        const f = imgFiles[i];
+                        const fullPath = path.join(tempDir, f);
+                        try {
+                            const meta = await sharp(fullPath).metadata();
+                            if (meta && meta.width && meta.height && (meta.width / meta.height) > 1.2) {
+                                // Split vertically into two halves
+                                const halfW = Math.floor(meta.width / 2);
+                                const leftBuf = await sharp(fullPath).extract({ left: 0, top: 0, width: halfW, height: meta.height }).toBuffer();
+                                const rightBuf = await sharp(fullPath).extract({ left: meta.width - halfW, top: 0, width: halfW, height: meta.height }).toBuffer();
+                                // Use jpg for output halves
+                                const outExt = '.jpg';
+                                const leftName = `split_${i+1}_a${outExt}`;
+                                const rightName = `split_${i+1}_b${outExt}`;
+                                fs.writeFileSync(path.join(tempDir, leftName), leftBuf);
+                                fs.writeFileSync(path.join(tempDir, rightName), rightBuf);
+                                // Order halves according to readingDir
+                                if ((readingDir || 'ltr') === 'ltr') {
+                                    expandedFiles.push(leftName, rightName);
+                                } else {
+                                    expandedFiles.push(rightName, leftName);
+                                }
+                                // Remove original wide file to avoid duplication
+                                try { fs.unlinkSync(fullPath); } catch(e) {}
+                                continue;
+                            }
+                        } catch (e) {
+                            // On error, fall back to using the original file
+                        }
+                        expandedFiles.push(f);
+                    }
+                } else {
+                    // No splitting requested or Sharp unavailable: keep original page list
+                    expandedFiles = imgFiles.slice(0, effectiveTotalPages);
+                }
+
+                // If splitting increased page count, update effectiveTotalPages
+                const finalPageFiles = expandedFiles;
+                const finalPageCount = finalPageFiles.length;
+                const padding = finalPageCount.toString().length;
+
+                // Rename (re-number) final pages sequentially
+                finalPageFiles.forEach((f, idx) => {
                     const num = (idx + 1).toString().padStart(Math.max(3, padding), '0');
                     const newName = `${num}${path.extname(f)}`;
-                    fs.renameSync(path.join(tempDir, f), path.join(tempDir, newName));
+                    const src = path.join(tempDir, f);
+                    const dst = path.join(tempDir, newName);
+                    try { fs.renameSync(src, dst); } catch(e) {}
                 });
 
             } else {
@@ -701,7 +763,15 @@ app.post('/convert', upload.array('files'), async (req, res) => {
                         let pipeline = sharp(inputBuffer);
                         if (rotAngle !== 0) pipeline = pipeline.rotate(rotAngle);
                         
-                        if (dpiVal) {
+                        if (maxW && maxW > 0) {
+                            try {
+                                const metadata = await pipeline.metadata();
+                                if (metadata.width > maxW) {
+                                    pipeline = pipeline.resize({ width: maxW, withoutEnlargement: true });
+                                }
+                                if (dpiVal) pipeline = pipeline.withMetadata({ density: dpiVal });
+                            } catch (e) {}
+                        } else if (dpiVal) {
                             try {
                                 const metadata = await pipeline.metadata();
                                 const sourceDensity = metadata.density || 72;

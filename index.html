@@ -202,11 +202,24 @@
             <label data-i18n="controls.dpi.label">DPI Resolution</label>
             <select id="dpi" title="Choose resolution. 'Original' extracts images without modification (fast). Other options re-render pages.">
                 <option value="original" selected data-i18n="controls.dpi.original">Original (Native extraction)</option>
+                <option value="72" data-i18n="controls.dpi.web">72 DPI (Web)</option>
                 <option value="150" data-i18n="controls.dpi.standard">150 DPI (Standard)</option>
                 <option value="225" data-i18n="controls.dpi.high">225 DPI (High)</option>
                 <option value="300" data-i18n="controls.dpi.very_high">300 DPI (Very High)</option>
                 <option value="450" data-i18n="controls.dpi.ultra">450 DPI (Ultra)</option>
                 <option value="600" data-i18n="controls.dpi.archive">600 DPI (Ultra High)</option>
+            </select>
+        </div>
+
+        <!-- Resize / Max Width -->
+        <div class="control-group">
+            <label data-i18n="controls.resize.label">Resize (Max Width)</label>
+            <select id="maxWidth" title="Limit image width for specific devices.">
+                <option value="" selected data-i18n="controls.resize.original">Original Size</option>
+                <option value="1280" data-i18n="controls.resize.sd">1280px (SD / E-Reader)</option>
+                <option value="1600" data-i18n="controls.resize.hd_plus">1600px (HD+)</option>
+                <option value="1920" data-i18n="controls.resize.fhd">1920px (Full HD / iPad)</option>
+                <option value="2560" data-i18n="controls.resize.2k">2560px (2K / Retina)</option>
             </select>
         </div>
 
@@ -282,6 +295,24 @@
             </div>
         </div>
 
+        <!-- Split double-pages (landscape scans) -->
+        <div class="control-group">
+            <label data-i18n="controls.split.label">Découper pages doubles</label>
+            <select id="splitDouble" title="Split landscape (double) pages automatically">
+                <option value="no" selected data-i18n="controls.split.options.no">Non</option>
+                <option value="auto" data-i18n="controls.split.options.auto">Auto (détecter et découper)</option>
+            </select>
+        </div>
+
+        <!-- Reading direction (for ordering halves) -->
+        <div class="control-group">
+            <label data-i18n="controls.reading.label">Sens de lecture</label>
+            <select id="readingDir" title="Ordre des pages après découpe">
+                <option value="ltr" selected data-i18n="controls.reading.direction.ltr">Gauche -> Droite (BD)</option>
+                <option value="rtl" data-i18n="controls.reading.direction.rtl">Droite -> Gauche (Manga)</option>
+            </select>
+        </div>
+
             <button id="btn-convert" disabled data-i18n="buttons.convert">Convert file(s)</button>
         </div>
 
@@ -342,7 +373,7 @@
         .then(r => r.json())
         .then(d => {
           const el = document.getElementById('app-version');
-          if (el && d.version) el.textContent = 'v' + d.version;
+          if (el && d.version) el.textContent = 'v' + d.version + ' - FuzZzor 2026';
         })
         .catch(() => {});
     </script>

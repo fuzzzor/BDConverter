@@ -79,6 +79,7 @@ function applyTranslations(dict) {
   // Tooltips (titles)
   const tooltipMap = {
     'dpi': 'tooltips.dpi',
+    'maxWidth': 'tooltips.resize',
     'colorMode': 'tooltips.color_mode',
     '.range-inputs': 'tooltips.page_range',
     'imgFormat': 'tooltips.image_format',
@@ -166,6 +167,7 @@ sliderCompression.addEventListener('input', (e) => {
 
 // ✅ Original mode handling: disable image processing options
 const dpiSelect = document.getElementById('dpi');
+const maxWidthSelect = document.getElementById('maxWidth');
 const colorModeSelect = document.getElementById('colorMode');
 const imgFormatSelect = document.getElementById('imgFormat');
 const compressionSlider = document.getElementById('compression');
@@ -178,6 +180,7 @@ function updateOriginalMode() {
   const isOriginal = dpiSelect.value === 'original';
   
   // Disable and gray out options not applicable in Original mode
+  maxWidthSelect.disabled = isOriginal;
   colorModeSelect.disabled = isOriginal;
   imgFormatSelect.disabled = isOriginal;
   compressionSlider.disabled = isOriginal;
@@ -189,11 +192,13 @@ function updateOriginalMode() {
   
   // Update UI appearance to indicate disabled state
   if (isOriginal) {
+    maxWidthSelect.style.opacity = '0.5';
     colorModeSelect.style.opacity = '0.5';
     imgFormatSelect.style.opacity = '0.5';
     compressionBox.style.opacity = '0.5';
     compressionSlider.style.cursor = 'not-allowed';
   } else {
+    maxWidthSelect.style.opacity = '1';
     colorModeSelect.style.opacity = '1';
     imgFormatSelect.style.opacity = '1';
     compressionBox.style.opacity = '1';
@@ -239,6 +244,19 @@ formatSelect.addEventListener('change', updateCompressionUI);
 
 // Initialize on load
 updateOriginalMode();
+
+// Disable split options when Original mode is active
+const splitSelect = document.getElementById('splitDouble');
+const readingSelect = document.getElementById('readingDir');
+function updateSplitOptions() {
+    const isOriginal = dpiSelect.value === 'original';
+    if (splitSelect) splitSelect.disabled = isOriginal;
+    if (readingSelect) readingSelect.disabled = isOriginal;
+    if (splitSelect) splitSelect.style.opacity = isOriginal ? '0.5' : '1';
+    if (readingSelect) readingSelect.style.opacity = isOriginal ? '0.5' : '1';
+}
+dpiSelect.addEventListener('change', updateSplitOptions);
+updateSplitOptions();
 
 // Technical logs removed
 
@@ -619,6 +637,7 @@ btnConvert.addEventListener('click', async () => {
   
   // ✅ CRITICAL FIX: send ALL parameters to the server
   formData.append('dpi', document.getElementById('dpi').value);
+  formData.append('maxWidth', document.getElementById('maxWidth').value);
   formData.append('colorMode', document.getElementById('colorMode').value);
   formData.append('pageStart', document.getElementById('pageStart').value);
   formData.append('pageEnd', document.getElementById('pageEnd').value);
@@ -627,6 +646,11 @@ btnConvert.addEventListener('click', async () => {
   formData.append('archiveCompression', document.getElementById('archiveCompression').value);
   formData.append('rotation', document.getElementById('rotation').value);
   formData.append('imgFormat', document.getElementById('imgFormat').value);
+  // New parameters: split double pages & reading direction
+  const splitVal = document.getElementById('splitDouble') ? document.getElementById('splitDouble').value : 'no';
+  const readingVal = document.getElementById('readingDir') ? document.getElementById('readingDir').value : 'ltr';
+  formData.append('splitDouble', splitVal);
+  formData.append('readingDir', readingVal);
 
   try {
     const response = await fetch('/convert', { method: 'POST', body: formData });
@@ -703,6 +727,7 @@ function showSummary(stats) {
 // Reset all control gadgets to default
 function resetControls() {
     dpiSelect.value = 'original';
+    document.getElementById('maxWidth').value = '';
     colorModeSelect.value = 'jpeg';
     document.getElementById('pageStart').value = '';
     document.getElementById('pageEnd').value = '';
