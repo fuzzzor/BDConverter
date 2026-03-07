@@ -24,8 +24,40 @@ const TEMP_DIR = process.env.TEMP_DIR || path.join(__dirname, 'temp');
 if (!fs.existsSync(UPLOAD_DIR)) fs.mkdirSync(UPLOAD_DIR, { recursive: true });
 if (!fs.existsSync(TEMP_DIR)) fs.mkdirSync(TEMP_DIR, { recursive: true });
 
-// Multer configuration
-const upload = multer({ dest: UPLOAD_DIR });
+// Multer configuration with proper filename encoding handling for Windows
+const storage = multer.diskStorage({
+    destination: (req, file, cb) => {
+        cb(null, UPLOAD_DIR);
+    },
+    filename: (req, file, cb) => {
+        // Fix UTF-8 encoding issues with filenames (Windows/Multer compatibility)
+        // Multer on Windows may receive filenames in latin1 instead of UTF-8
+        let filename = file.originalname;
+        try {
+            // Detect if filename contains non-ASCII characters that suggest incorrect encoding
+            const hasAccents = /[éèêëàâäôöùûüçÉÈÊËÀÂÄÔÖÙÛÜÇ]/i.test(filename);
+            const hasReplacementChar = filename.includes('�');
+            
+            if (!hasAccents && !hasReplacementChar) {
+                // Try to decode from latin1 to UTF-8 to recover accented characters
+                const testDecode = Buffer.from(filename, 'latin1').toString('utf8');
+                // Check if decoded version contains expected accented characters
+                if (/[éèêëàâäôöùûüçÉÈÊËÀÂÄÔÖÙÛÜÇ]/i.test(testDecode)) {
+                    filename = testDecode;
+                    console.log(`[ENCODING] Fixed filename: ${file.originalname} → ${filename}`);
+                }
+            }
+        } catch (e) {
+            console.warn('[ENCODING] Filename encoding detection failed, using original:', e.message);
+        }
+        // Store corrected filename back to file object for later use
+        file.originalname = filename;
+        // Generate unique filename for storage (avoid encoding issues in temp storage)
+        const uniqueSuffix = Date.now() + '-' + Math.random().toString(36).substring(7);
+        cb(null, uniqueSuffix);
+    }
+});
+const upload = multer({ storage: storage });
 
 // Serve static frontend files
 app.use(express.static(__dirname));
@@ -222,9 +254,6 @@ app.post('/convert', upload.array('files'), async (req, res) => {
 
             // Process Images
             for (const [idx, file] of taskFiles.entries()) {
-                // Fix encoding
-                file.originalname = Buffer.from(file.originalname, 'latin1').toString('utf8');
-                
                 const ext = path.extname(file.originalname).toLowerCase();
                 const isExotic = ['.webp', '.bmp'].includes(ext);
                 
@@ -410,9 +439,6 @@ app.post('/convert', upload.array('files'), async (req, res) => {
 
         // Helper: Process Single File (PDF/Archive -> Archive)
         const processConvertTask = async (file, taskIdx, totalTasks) => {
-            // Fix encoding
-            file.originalname = Buffer.from(file.originalname, 'latin1').toString('utf8');
-
             sendProgress(requestId, {
                 type: 'progress',
                 currentFileIndex: taskIdx + 1,
