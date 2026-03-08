@@ -19,14 +19,12 @@ dropzone:
 
 controls:
   dpi:
-    label: "Résolution (DPI)"
+    label: "Mode de rendu"
     original: "Original (Extraction native)"
-    web: "72 DPI (Web)"
-    standard: "150 DPI (Standard)"
-    high: "225 DPI (Haute)"
-    very_high: "300 DPI (Très Haute)"
-    ultra: "450 DPI (Ultra)"
-    archive: "600 DPI (Ultra Haute)"
+    standard: "Lecture (150 DPI) - Liseuses"
+    high: "Recommandé (225 DPI) - Qualité/Taille"
+    very_high: "Haute qualité (300 DPI) - Retina/Zoom"
+    archive: "Archivage (600 DPI) - Impression/Pro"
 
   resize:
     label: "Redimensionner (Largeur Max)"
@@ -117,8 +115,16 @@ summary:
   size: "Taille totale :"
   output_dir: "Dossier de sortie :"
 
+upscale_warning:
+  title: "⚠️ Avertissement : Agrandissement d'images"
+  message: "Certaines images sont plus petites que la largeur maximale demandée ({maxWidth}px)."
+  details: "L'agrandissement peut dégrader la qualité visuelle (effet de pixellisation)."
+  question: "Voulez-vous continuer et agrandir ces images ?"
+  ok: "Oui, agrandir"
+  cancel: "Annuler la conversion"
+
 tooltips:
-  dpi: "Choisissez la résolution. 'Original' extrait sans modification (rapide). Les autres options recalculent les pages."
+  dpi: "Mode de rendu. 'Original' = extraction rapide sans modification. 'Recommandé (225 DPI)' = meilleur compromis qualité/taille pour lecture numérique."
   resize: "Réduit la largeur de l'image pour s'adapter à des appareils spécifiques."
   color_mode: "Change le mode couleur. Ignoré en mode 'Original'."
   page_range: "Définit les pages à convertir (laisser vide pour tout)."

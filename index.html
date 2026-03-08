@@ -199,15 +199,13 @@
         <div class="controls-grid">
         <!-- DPI resolution -->
         <div class="control-group">
-            <label data-i18n="controls.dpi.label">DPI Resolution</label>
-            <select id="dpi" title="Choose resolution. 'Original' extracts images without modification (fast). Other options re-render pages.">
+            <label data-i18n="controls.dpi.label">Rendering Mode</label>
+            <select id="dpi" title="Choose rendering quality. 'Original' extracts images without modification (fast). Other options re-render pages at specified quality.">
                 <option value="original" selected data-i18n="controls.dpi.original">Original (Native extraction)</option>
-                <option value="72" data-i18n="controls.dpi.web">72 DPI (Web)</option>
-                <option value="150" data-i18n="controls.dpi.standard">150 DPI (Standard)</option>
-                <option value="225" data-i18n="controls.dpi.high">225 DPI (High)</option>
-                <option value="300" data-i18n="controls.dpi.very_high">300 DPI (Very High)</option>
-                <option value="450" data-i18n="controls.dpi.ultra">450 DPI (Ultra)</option>
-                <option value="600" data-i18n="controls.dpi.archive">600 DPI (Ultra High)</option>
+                <option value="150" data-i18n="controls.dpi.standard">Reading (150 DPI) - E-readers</option>
+                <option value="225" data-i18n="controls.dpi.high">Recommended (225 DPI) - Quality/Size</option>
+                <option value="300" data-i18n="controls.dpi.very_high">High Quality (300 DPI) - Retina/Zoom</option>
+                <option value="600" data-i18n="controls.dpi.archive">Archival (600 DPI) - Print/Pro</option>
             </select>
         </div>
 
@@ -299,8 +297,8 @@
         <div class="control-group">
             <label data-i18n="controls.split.label">Split Double Pages</label>
             <select id="splitDouble" title="Split landscape (double) pages automatically">
-                <option value="no" selected data-i18n="controls.split.options.no">No</option>
-                <option value="auto" data-i18n="controls.split.options.auto">Auto (detect and split)</option>
+                <option value="no" data-i18n="controls.split.options.no">No</option>
+                <option value="auto" selected data-i18n="controls.split.options.auto">Auto (detect and split)</option>
             </select>
         </div>
 
@@ -318,8 +316,8 @@
 
         <!-- Progress area -->
         <div id="counters-container" style="width:100%; display:none; align-items:center; justify-content:space-between; margin-top:10px;">
-            <div id="page-counter" style="color:#FF9800; font-weight:bold; font-size: 0.7em; white-space: nowrap;">Image : 0 / 0</div>
-            <div style="display:flex; flex-direction:column; align-items:center;">
+            <div id="page-counter" style="display:none; color:#FF9800; font-weight:bold; font-size: 0.7em; white-space: nowrap;">Image : 0 / 0</div>
+            <div style="display:flex; flex-direction:column; align-items:center; flex:1;">
                 <div id="current-file-name" style="color:#FF9800; font-size:0.9em; margin-bottom:6px; text-align:center; max-width:350px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;"></div>
                 <div id="progress-thumb" class="progress-thumb"></div>
                 <!-- Global phase (below thumbnail, outside thumbnail) -->
@@ -350,6 +348,22 @@
             <div class="modal-actions">
                 <!-- <button class="modal-btn btn-primary" id="btn-open-folder">Open folder</button> -->
                 <button class="modal-btn btn-secondary" id="btn-close-modal" data-i18n="buttons.close">Close</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- UPSCALE WARNING MODAL -->
+    <div id="upscale-warning-modal" class="modal">
+        <div class="modal-content">
+            <h2 id="upscale-warning-title" data-i18n="upscale_warning.title">⚠️ Warning: Image Upscaling</h2>
+            <div id="upscale-warning-content" style="margin: 20px 0; line-height: 1.6;">
+                <p id="upscale-warning-message" data-i18n="upscale_warning.message">Some images are smaller than the requested maximum width ({maxWidth}px).</p>
+                <p id="upscale-warning-details" data-i18n="upscale_warning.details" style="color: #FF9800;">Upscaling may degrade visual quality (pixelation effect).</p>
+                <p id="upscale-warning-question" data-i18n="upscale_warning.question" style="font-weight: bold;">Do you want to continue and upscale these images?</p>
+            </div>
+            <div class="modal-actions">
+                <button class="modal-btn btn-primary" id="upscale-ok" data-i18n="upscale_warning.ok" style="background-color: #FF9800;">Yes, upscale</button>
+                <button class="modal-btn btn-secondary" id="upscale-cancel" data-i18n="upscale_warning.cancel">Cancel conversion</button>
             </div>
         </div>
     </div>

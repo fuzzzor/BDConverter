@@ -10,6 +10,25 @@ try { sharp = require('sharp'); } catch(e) { console.warn('Sharp module not foun
 const app = express();
 const port = process.env.PORT || 3111;
 
+// Log level configuration (info by default, debug for detailed logs)
+const LOG_LEVEL = (process.env.LOGS || 'info').toLowerCase();
+const isDebugMode = LOG_LEVEL === 'debug';
+
+// Logging helpers
+function logInfo(...args) {
+    console.log(...args);
+}
+
+function logDebug(...args) {
+    if (isDebugMode) {
+        console.log(...args);
+    }
+}
+
+function logWarn(...args) {
+    console.warn(...args);
+}
+
 // Middleware to parse JSON payloads (required for client-side logs)
 app.use(express.json());
 
@@ -44,11 +63,11 @@ const storage = multer.diskStorage({
                 // Check if decoded version contains expected accented characters
                 if (/[éèêëàâäôöùûüçÉÈÊËÀÂÄÔÖÙÛÜÇ]/i.test(testDecode)) {
                     filename = testDecode;
-                    console.log(`[ENCODING] Fixed filename: ${file.originalname} → ${filename}`);
+                    logDebug(`[ENCODING] Fixed filename: ${file.originalname} → ${filename}`);
                 }
             }
         } catch (e) {
-            console.warn('[ENCODING] Filename encoding detection failed, using original:', e.message);
+            logWarn('[ENCODING] Filename encoding detection failed, using original:', e.message);
         }
         // Store corrected filename back to file object for later use
         file.originalname = filename;
@@ -81,7 +100,7 @@ if (isWin) {
     if (!fs.existsSync(popplerPath)) {
         console.error(`❌ CRITICAL ERROR: Poppler not found in bin/ directory`);
     } else {
-        console.log(`✅ Poppler detected (Windows)`);
+        logInfo(`✅ Poppler detected (Windows)`);
     }
 } else {
     execFile(checkTool, ['-v'], (error) => {
@@ -89,7 +108,7 @@ if (isWin) {
             console.error(`❌ CRITICAL ERROR: Poppler is not installed.`);
             console.error(`   On Debian/Ubuntu, install it with: apt-get install poppler-utils`);
         } else {
-            console.log(`✅ Poppler detected (Linux)`);
+            logInfo(`✅ Poppler detected (Linux)`);
         }
     });
 }
@@ -113,7 +132,7 @@ app.get('/events', (req, res) => {
     res.setHeader('Connection', 'keep-alive');
     res.flushHeaders();
 
-    console.log(`[DEBUG] SSE connection registered for ID: ${requestId}`);
+    logDebug(`[DEBUG] SSE connection registered for ID: ${requestId}`);
     activeConnections[requestId] = res;
 
     req.on('close', () => {
@@ -125,7 +144,7 @@ app.get('/events', (req, res) => {
 app.post('/client-log', (req, res) => {
     const { message } = req.body;
     if (message) {
-        console.log(`[UI] ${message}`);
+        logInfo(`[UI] ${message}`);
     }
     res.sendStatus(200);
 });
@@ -133,8 +152,14 @@ app.post('/client-log', (req, res) => {
 function sendProgress(requestId, data) {
     if (activeConnections[requestId]) {
         activeConnections[requestId].write(`data: ${JSON.stringify(data)}\n\n`);
+        // Detailed logging for progress events
+        if (data.type === 'progress') {
+            logDebug(`[SSE SENT] type:${data.type} | file:${data.currentFileIndex}/${data.totalFiles} | pages:${data.currentPages}/${data.totalPages} | pct:${data.currentPct}%`);
+        } else if (data.type === 'thumbnail-init') {
+            logDebug(`[SSE SENT] type:thumbnail-init | ${data.color ? 'color thumbnail' : 'no color'}`);
+        }
     } else {
-        console.warn(`[DEBUG] No active SSE connection for ID: ${requestId}. Event dropped: ${data.type}`);
+        logWarn(`[SSE DROP] No connection for ID: ${requestId} | Event: ${data.type}`);
     }
 }
 
@@ -173,7 +198,7 @@ app.post('/analyze', upload.single('file'), (req, res) => {
         try { fs.unlinkSync(filePath); } catch(e) { console.error("Cleanup error:", e); }
 
         if (err) {
-            console.warn("Analyzer error (7z):", err.message);
+            logWarn("Analyzer error (7z):", err.message);
             // Fallback: 1 page par défaut si échec
             return res.json({ pages: 1 });
         }
@@ -200,6 +225,7 @@ app.post('/convert', upload.array('files'), async (req, res) => {
     const isOriginal = dpi === 'original';
     const rotAngle = rotation ? parseInt(rotation) : 0;
     const maxW = maxWidth ? parseInt(maxWidth) : null;
+    logInfo(`[REQUEST PARAMS] dpi="${dpi}", maxWidth="${maxWidth}", maxW=${maxW}, isOriginal=${isOriginal}`);
     const files = req.files;
 
     if (!files || files.length === 0) {
@@ -217,7 +243,7 @@ app.post('/convert', upload.array('files'), async (req, res) => {
             }
         }
     } catch (e) {
-        console.warn("Error parsing filePaths:", e);
+        logWarn("Error parsing filePaths:", e);
     }
 
     // Helper: is this a PDF?
@@ -235,6 +261,7 @@ app.post('/convert', upload.array('files'), async (req, res) => {
 
         // Helper: Process Merge Task (Images -> Archive)
         const processMergeTask = async (taskFiles, baseName, taskIdx, totalTasks) => {
+            logInfo(`[TASK START] ${taskIdx+1}/${totalTasks}: Merging ${taskFiles.length} images into "${baseName}"`);
             sendProgress(requestId, { type: 'log', message: `Starting task ${taskIdx+1}/${totalTasks}: Merging ${taskFiles.length} images into "${baseName}"` });
             
             const tempDir = path.join(TEMP_DIR, `merge_${Date.now()}_${Math.random().toString(36).substring(7)}`);
@@ -249,15 +276,17 @@ app.post('/convert', upload.array('files'), async (req, res) => {
                     sendProgress(requestId, { type: 'log', message: `Generating preview for ${baseName}...` });
                     const buffer = await sharp(taskFiles[0].path).resize(200).toBuffer();
                     sendProgress(requestId, { type: 'thumbnail-init', color: `data:image/jpeg;base64,${buffer.toString('base64')}` });
-                } catch(e) { console.warn("Merge Thumbnail error:", e); }
+                } catch(e) { logWarn("Merge Thumbnail error:", e); }
             }
 
             // Process Images
             for (const [idx, file] of taskFiles.entries()) {
                 const ext = path.extname(file.originalname).toLowerCase();
                 const isExotic = ['.webp', '.bmp'].includes(ext);
+                const needsResizing = (maxW && maxW > 0) || dpiVal;
                 
-                sendProgress(requestId, {
+                // Send progress for EVERY image
+                const progressData = {
                     type: 'progress',
                     currentFileIndex: taskIdx + 1,
                     totalFiles: totalTasks,
@@ -265,30 +294,26 @@ app.post('/convert', upload.array('files'), async (req, res) => {
                     currentFileName: baseName,
                     currentPages: idx + 1,
                     totalPages: taskFiles.length,
+                    currentPct: Math.round(((idx + 1) / taskFiles.length) * 100),
                     status: isExotic ? `Conversion jpg en cours... (${idx + 1}/${taskFiles.length})` : `Processing image ${idx + 1}/${taskFiles.length}`
-                });
+                };
+                logDebug(`[MERGE PROGRESS] Task ${taskIdx+1}/${totalTasks} | Image ${idx + 1}/${taskFiles.length} (${progressData.currentPct}%)`);
+                sendProgress(requestId, progressData);
 
                 const num = (idx + 1).toString().padStart(Math.max(3, padding), '0');
                 
                 // Force JPEG for exotic formats (WEBP, BMP)
                 const forceJpeg = isExotic;
                 
-                const shouldUseSharp = sharp && (forceJpeg || rotAngle !== 0 || !isOriginal);
+                const shouldUseSharp = sharp && (forceJpeg || rotAngle !== 0 || needsResizing || !isOriginal);
 
                 if (shouldUseSharp) {
                     let pipeline = sharp(file.path);
                     if (rotAngle !== 0) pipeline = pipeline.rotate(rotAngle);
                     
-                    // Resize logic (MaxWidth takes precedence over DPI-based resizing)
-                    if (maxW && maxW > 0) {
-                        try {
-                            const metadata = await pipeline.metadata();
-                            if (metadata.width > maxW) {
-                                pipeline = pipeline.resize({ width: maxW, withoutEnlargement: true });
-                            }
-                            if (dpiVal) pipeline = pipeline.withMetadata({ density: dpiVal });
-                        } catch (e) {}
-                    } else if (dpiVal) {
+                    // Resize logic: DPI and MaxWidth are complementary (not exclusive)
+                    // Step 1: Apply DPI-based resizing if requested
+                    if (dpiVal) {
                         try {
                             const metadata = await pipeline.metadata();
                             const sourceDensity = metadata.density || 72;
@@ -301,6 +326,18 @@ app.post('/convert', upload.array('files'), async (req, res) => {
                         } catch (e) {
                             pipeline = pipeline.withMetadata({ density: dpiVal });
                         }
+                    }
+                    
+                    // Step 2: Apply MaxWidth limit if defined (after DPI resizing)
+                    if (maxW && maxW > 0) {
+                        try {
+                            const metadata = await pipeline.metadata();
+                            const willResize = metadata.width !== maxW;
+                            logDebug(`[MERGE RESIZE] Image ${idx + 1}: Source width=${metadata.width}px, MaxWidth=${maxW}px, Will resize: ${willResize} (${metadata.width < maxW ? 'upscale' : metadata.width > maxW ? 'downscale' : 'no change'})`);
+                            if (willResize) {
+                                pipeline = pipeline.resize({ width: maxW });
+                            }
+                        } catch (e) {}
                     }
 
                     if (colorMode === 'gray') pipeline = pipeline.grayscale();
@@ -320,13 +357,19 @@ app.post('/convert', upload.array('files'), async (req, res) => {
                 }
             }
 
-            // Create Archive
-            sendProgress(requestId, {
+            // Create Archive - Signal completion for cumulative counter
+            const completionData = {
                 type: 'progress',
+                currentFileIndex: taskIdx + 1,
+                totalFiles: totalTasks,
                 currentPct: 100,
+                currentPages: taskFiles.length,
+                totalPages: taskFiles.length,
                 status: "Assembling archive...",
                 currentFileName: baseName
-            });
+            };
+            logInfo(`[TASK END] ${taskIdx+1}/${totalTasks}: "${baseName}" - ${taskFiles.length} images processed`);
+            sendProgress(requestId, completionData);
 
             const allowedFormats = ['cbz', 'cbt', 'cb7', 'cbr', 'pdf', 'rar4', 'folder'];
             const safeFormat = allowedFormats.includes(format) ? format : 'cbz';
@@ -341,6 +384,17 @@ app.post('/convert', upload.array('files'), async (req, res) => {
             if (safeFormat === 'folder') {
                 // Folder mode: skip archiving
             } else if (safeFormat === 'pdf') {
+                // Send final progress event before PDF assembly to complete thumbnail animation
+                sendProgress(requestId, {
+                    type: 'progress',
+                    currentFileIndex: taskIdx + 1,
+                    totalFiles: totalTasks,
+                    currentPct: 100,
+                    currentPages: taskFiles.length,
+                    totalPages: taskFiles.length,
+                    status: "Creating PDF..."
+                });
+                
                 await new Promise((resolve, reject) => {
                     const doc = new PDFDocument({ autoFirstPage: false });
                     const stream = fs.createWriteStream(tempOutputPath);
@@ -361,17 +415,18 @@ app.post('/convert', upload.array('files'), async (req, res) => {
             } else if (safeFormat === 'cbt') {
                 await new Promise((resolve, reject) => exec(`tar -cf "${tempOutputPath}" .`, { cwd: tempDir }, (err) => err ? reject(err) : resolve()));
             } else if (safeFormat === 'cb7') {
-                const level = isOriginal ? 0 : archCompVal;
+                // Note: Archive compression applies even in Original mode (image extraction is native, but archive can still be compressed)
+                const level = archCompVal;
                 await new Promise((resolve, reject) => exec(`7z a -t7z -mx=${level} "${tempOutputPath}" .`, { cwd: tempDir }, (err) => err ? reject(err) : resolve()));
             } else if (safeFormat === 'cbr') {
-                 let rarComp = isOriginal ? 0 : (archCompVal === 0 ? 0 : 3);
+                 let rarComp = (archCompVal === 0 ? 0 : 3);
                  await new Promise((resolve, reject) => exec(`rar a -r -m${rarComp} -ep1 "${tempOutputPath}" .`, { cwd: tempDir }, (err) => err ? reject(err) : resolve()));
             } else if (safeFormat === 'rar4') {
-                 let rarComp = isOriginal ? 0 : (archCompVal === 0 ? 0 : 3);
+                 let rarComp = (archCompVal === 0 ? 0 : 3);
                  await new Promise((resolve, reject) => exec(`rar a -ma4 -r -m${rarComp} -ep1 "${tempOutputPath}" .`, { cwd: tempDir }, (err) => err ? reject(err) : resolve()));
             } else {
                 // CBZ
-                const level = isOriginal ? 0 : archCompVal;
+                const level = archCompVal;
                 await new Promise((resolve, reject) => exec(`7z a -tzip -mx=${level} "${tempOutputPath}" .`, { cwd: tempDir }, (err) => err ? reject(err) : resolve()));
             }
 
@@ -406,7 +461,7 @@ app.post('/convert', upload.array('files'), async (req, res) => {
                         const buffer = await sharp(path.join(tempDir, images[0])).resize(200).toBuffer();
                         thumbnail = `data:image/jpeg;base64,${buffer.toString('base64')}`;
                     }
-                } catch(e) { console.warn("Final Thumbnail generation error:", e); }
+                } catch(e) { logWarn("Final Thumbnail generation error:", e); }
             }
 
             // Cleanup
@@ -662,51 +717,109 @@ app.post('/convert', upload.array('files'), async (req, res) => {
                     catch(e) { console.error("Archive rename error:", e); }
                 }
 
-                // Fast Thumbnail
+                // Detect RAR archives early (for thumbnail generation)
+                let isRarArchive = false;
+                try {
+                    const fd = fs.openSync(file.path, 'r');
+                    const buffer = Buffer.alloc(7);
+                    fs.readSync(fd, buffer, 0, 7, 0);
+                    fs.closeSync(fd);
+                    if (buffer.toString('hex').startsWith('526172211a07')) isRarArchive = true;
+                } catch(e) {}
+                if (ext === '.cbr' || ext === '.rar') isRarArchive = true;
+
+                // Fast Thumbnail for archives
                 if (FEATURE_PROGRESS_THUMBNAIL && sharp) {
                     sendProgress(requestId, { type: 'log', message: `Generating preview...` });
                     try {
                         await new Promise(resolve => {
-                            exec(`7z l -slt "${file.path}"`, async (err, stdout) => {
-                                if (err) { resolve(); return; }
-                                const match = stdout.match(/Path = (.+\.(jpg|jpeg|png|webp))[\r\n]/i);
-                                if (match && match[1]) {
-                                    const imgPath = match[1].trim();
+                            // Use appropriate listing tool based on archive type
+                            const listCmd = isRarArchive
+                                ? `rar lb "${file.path}"` // RAR: simple list (using rar command)
+                                : `7z l -slt "${file.path}"`; // Others: detailed list
+                            
+                            exec(listCmd, async (err, stdout) => {
+                                if (err) {
+                                    logWarn(`Archive thumbnail list error (${isRarArchive ? 'RAR' : '7z'}):`, err.message);
+                                    resolve();
+                                    return;
+                                }
+                                
+                                // Find FIRST image file in listing (sorted order)
+                                let imgPath = null;
+                                if (isRarArchive) {
+                                    // RAR simple listing: one filename per line
+                                    const lines = stdout.split(/\r?\n/);
+                                    const images = lines
+                                        .map(line => line.trim())
+                                        .filter(line => line && /\.(jpg|jpeg|png|webp|gif|bmp)$/i.test(line));
+                                    
+                                    if (images.length > 0) {
+                                        // Sort alphabetically/numerically to get the first page (001.jpg, cover.jpg, etc.)
+                                        images.sort((a, b) => a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' }));
+                                        imgPath = images[0];
+                                        logDebug(`RAR: Found ${images.length} images, using first: ${imgPath}`);
+                                    }
+                                } else {
+                                    // 7z detailed listing: get all images and sort
+                                    const allMatches = [...stdout.matchAll(/Path = ([^\r\n]+\.(jpg|jpeg|png|webp|gif|bmp))/gi)];
+                                    if (allMatches.length > 0) {
+                                        const images = allMatches.map(m => m[1].trim());
+                                        images.sort((a, b) => a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' }));
+                                        imgPath = images[0];
+                                        logDebug(`7z: Found ${images.length} images, using first: ${imgPath}`);
+                                    }
+                                }
+                                
+                                if (imgPath) {
                                     const thumbTempDir = path.join(tempDir, 'thumb_fast');
                                     fs.mkdirSync(thumbTempDir, { recursive: true });
-                                    exec(`7z e "${file.path}" -o"${thumbTempDir}" "${imgPath}" -y`, async (err2) => {
-                                        if (!err2) {
-                                            try {
-                                                const files = fs.readdirSync(thumbTempDir);
-                                                const imgFile = files.find(f => /\.(jpg|jpeg|png|webp)$/i.test(f));
-                                                if (imgFile) {
-                                                    const b = await sharp(path.join(thumbTempDir, imgFile)).resize(200).toBuffer();
-                                                    const b64 = b.toString('base64');
-                                                    sendProgress(requestId, { type: 'thumbnail-init', color: `data:image/jpeg;base64,${b64}` });
-                                                }
-                                            } catch(e) {}
+                                    
+                                    // Extract first image using appropriate tool
+                                    const extractCmd = isRarArchive
+                                        ? `rar e -y "${file.path}" "${imgPath}" "${thumbTempDir}/"`
+                                        : `7z e "${file.path}" -o"${thumbTempDir}" "${imgPath}" -y`;
+                                    
+                                    exec(extractCmd, async (err2, stdout2, stderr2) => {
+                                        if (err2) {
+                                            logWarn(`Archive thumbnail extract error (${isRarArchive ? 'RAR' : '7z'}):`, err2.message);
                                             try { fs.rmSync(thumbTempDir, { recursive: true, force: true }); } catch(e){}
+                                            resolve();
+                                            return;
                                         }
+                                        
+                                        try {
+                                            const files = fs.readdirSync(thumbTempDir);
+                                            const imgFile = files.find(f => /\.(jpg|jpeg|png|webp|gif|bmp)$/i.test(f));
+                                            if (imgFile) {
+                                                const b = await sharp(path.join(thumbTempDir, imgFile)).resize(200).toBuffer();
+                                                const b64 = b.toString('base64');
+                                                sendProgress(requestId, { type: 'thumbnail-init', color: `data:image/jpeg;base64,${b64}` });
+                                                logDebug(`✓ Archive thumbnail generated successfully (${isRarArchive ? 'RAR' : '7z'})`);
+                                            } else {
+                                                logWarn('No image file found in extracted thumbnail');
+                                            }
+                                        } catch(e) {
+                                            logWarn('Archive thumbnail processing error:', e.message);
+                                        }
+                                        
+                                        try { fs.rmSync(thumbTempDir, { recursive: true, force: true }); } catch(e){}
                                         resolve();
                                     });
-                                } else { resolve(); }
+                                } else {
+                                    logWarn('No image found in archive listing');
+                                    resolve();
+                                }
                             });
                         });
-                    } catch(e) {}
+                    } catch(e) {
+                        logWarn('Archive thumbnail generation failed:', e.message);
+                    }
                 }
 
                 await new Promise((resolve, reject) => {
-                    const ext = path.extname(file.originalname).toLowerCase();
-                    let isRarSignature = false;
-                    try {
-                        const fd = fs.openSync(file.path, 'r');
-                        const buffer = Buffer.alloc(7);
-                        fs.readSync(fd, buffer, 0, 7, 0);
-                        fs.closeSync(fd);
-                        if (buffer.toString('hex').startsWith('526172211a07')) isRarSignature = true;
-                    } catch(e) {}
-
-                    if (isRarSignature || ext === '.cbr' || ext === '.rar') {
+                    // Use isRarArchive already detected above
+                    if (isRarArchive) {
                         exec(`rar x -y "${file.path}" "${tempDir}/"`, (err) => {
                             if (err) {
                                 exec(`unrar x -y "${file.path}" "${tempDir}/"`, (err2) => {
@@ -789,15 +902,9 @@ app.post('/convert', upload.array('files'), async (req, res) => {
                         let pipeline = sharp(inputBuffer);
                         if (rotAngle !== 0) pipeline = pipeline.rotate(rotAngle);
                         
-                        if (maxW && maxW > 0) {
-                            try {
-                                const metadata = await pipeline.metadata();
-                                if (metadata.width > maxW) {
-                                    pipeline = pipeline.resize({ width: maxW, withoutEnlargement: true });
-                                }
-                                if (dpiVal) pipeline = pipeline.withMetadata({ density: dpiVal });
-                            } catch (e) {}
-                        } else if (dpiVal) {
+                        // Resize logic: DPI and MaxWidth are complementary (not exclusive)
+                        // Step 1: Apply DPI-based resizing if requested
+                        if (dpiVal) {
                             try {
                                 const metadata = await pipeline.metadata();
                                 const sourceDensity = metadata.density || 72;
@@ -807,6 +914,18 @@ app.post('/convert', upload.array('files'), async (req, res) => {
                                     pipeline = pipeline.resize(newWidth);
                                 }
                                 pipeline = pipeline.withMetadata({ density: targetDensity });
+                            } catch (e) {}
+                        }
+                        
+                        // Step 2: Apply MaxWidth limit if defined (after DPI resizing)
+                        if (maxW && maxW > 0) {
+                            try {
+                                const metadata = await pipeline.metadata();
+                                const willResize = metadata.width !== maxW;
+                                logDebug(`[CONVERT RESIZE] Image ${processedCount}: Source width=${metadata.width}px, MaxWidth=${maxW}px, Will resize: ${willResize} (${metadata.width < maxW ? 'upscale' : metadata.width > maxW ? 'downscale' : 'no change'})`);
+                                if (willResize) {
+                                    pipeline = pipeline.resize({ width: maxW });
+                                }
                             } catch (e) {}
                         }
 
@@ -827,7 +946,8 @@ app.post('/convert', upload.array('files'), async (req, res) => {
                         fs.copyFileSync(srcPath, path.join(processingDir, `${num}${ext}`));
                     }
 
-                    if (processedCount % 5 === 0) {
+                    // Send progress updates more frequently for better UX
+                    if (processedCount % 5 === 0 || processedCount === effectiveTotalPages) {
                         const pct = Math.round((processedCount / effectiveTotalPages) * 100);
                         sendProgress(requestId, {
                             type: 'progress',
@@ -835,7 +955,10 @@ app.post('/convert', upload.array('files'), async (req, res) => {
                             totalFiles: totalTasks,
                             currentPct: pct,
                             currentPages: processedCount,
-                            totalPages: effectiveTotalPages
+                            totalPages: effectiveTotalPages,
+                            status: processedCount === effectiveTotalPages
+                                ? "Processing complete..."
+                                : `Processing image ${processedCount}/${effectiveTotalPages}`
                         });
                     }
                 }
@@ -868,6 +991,7 @@ app.post('/convert', upload.array('files'), async (req, res) => {
             }
 
             // Finalize (Same logic as Merge)
+            logInfo(`[TASK END] ${taskIdx+1}/${totalTasks}: "${file.originalname}" - ${effectiveTotalPages} pages processed`);
             sendProgress(requestId, {
                 type: 'progress',
                 currentFileIndex: taskIdx + 1,
@@ -913,34 +1037,29 @@ app.post('/convert', upload.array('files'), async (req, res) => {
             } else if (safeFormat === 'cbt') {
                 await new Promise((resolve, reject) => exec(`tar -cf "${tempOutputPath}" .`, { cwd: tempDir }, (err) => err ? reject(err) : resolve()));
             } else if (safeFormat === 'cb7') {
-                const level = isOriginal ? 0 : archCompVal;
+                // Note: Archive compression applies even in Original mode (image extraction is native, but archive can still be compressed)
+                const level = archCompVal;
                 await new Promise((resolve, reject) => exec(`7z a -t7z -mx=${level} "${tempOutputPath}" .`, { cwd: tempDir }, (err) => err ? reject(err) : resolve()));
             } else if (safeFormat === 'cbr') {
                 let rarComp = 3;
-                if (isOriginal) rarComp = 0;
-                else {
-                    if (archCompVal === 0) rarComp = 0;
-                    else if (archCompVal === 1) rarComp = 1;
-                    else if (archCompVal === 3) rarComp = 2;
-                    else if (archCompVal === 5) rarComp = 3;
-                    else if (archCompVal === 7) rarComp = 4;
-                    else if (archCompVal === 9) rarComp = 5;
-                }
+                if (archCompVal === 0) rarComp = 0;
+                else if (archCompVal === 1) rarComp = 1;
+                else if (archCompVal === 3) rarComp = 2;
+                else if (archCompVal === 5) rarComp = 3;
+                else if (archCompVal === 7) rarComp = 4;
+                else if (archCompVal === 9) rarComp = 5;
                 await new Promise((resolve, reject) => exec(`rar a -r -m${rarComp} -ep1 "${tempOutputPath}" .`, { cwd: tempDir }, (err) => err ? reject(err) : resolve()));
             } else if (safeFormat === 'rar4') {
                 let rarComp = 3;
-                if (isOriginal) rarComp = 0;
-                else {
-                    if (archCompVal === 0) rarComp = 0;
-                    else if (archCompVal === 1) rarComp = 1;
-                    else if (archCompVal === 3) rarComp = 2;
-                    else if (archCompVal === 5) rarComp = 3;
-                    else if (archCompVal === 7) rarComp = 4;
-                    else if (archCompVal === 9) rarComp = 5;
-                }
+                if (archCompVal === 0) rarComp = 0;
+                else if (archCompVal === 1) rarComp = 1;
+                else if (archCompVal === 3) rarComp = 2;
+                else if (archCompVal === 5) rarComp = 3;
+                else if (archCompVal === 7) rarComp = 4;
+                else if (archCompVal === 9) rarComp = 5;
                 await new Promise((resolve, reject) => exec(`rar a -ma4 -r -m${rarComp} -ep1 "${tempOutputPath}" .`, { cwd: tempDir }, (err) => err ? reject(err) : resolve()));
             } else {
-                const level = isOriginal ? 0 : archCompVal;
+                const level = archCompVal;
                 await new Promise((resolve, reject) => exec(`7z a -tzip -mx=${level} "${tempOutputPath}" .`, { cwd: tempDir }, (err) => err ? reject(err) : resolve()));
             }
 
@@ -990,7 +1109,7 @@ app.post('/convert', upload.array('files'), async (req, res) => {
                         const buffer = await sharp(path.join(tempDir, images[0])).resize(200).toBuffer();
                         thumbnail = `data:image/jpeg;base64,${buffer.toString('base64')}`;
                     }
-                } catch(e) { console.warn("Final Thumbnail generation error:", e); }
+                } catch(e) { logWarn("Final Thumbnail generation error:", e); }
             }
             
             fs.rmSync(tempDir, { recursive: true, force: true });
@@ -1095,5 +1214,5 @@ app.post('/convert', upload.array('files'), async (req, res) => {
 });
 
 app.listen(port, () => {
-    console.log(`BDConverter server started on http://localhost:${port}`);
+    logInfo(`BDConverter server started on http://localhost:${port} | Log level: ${LOG_LEVEL.toUpperCase()}`);
 });

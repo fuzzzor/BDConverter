@@ -57,6 +57,7 @@ services:
       - "3111:3111"
     environment:
       - FEATURE_PROGRESS_THUMBNAIL=1
+      - LOGS=info  # or 'debug' for detailed logs
     volumes:
       - ./output:/app/output
       - ./upload:/app/upload #(optional)
@@ -70,6 +71,7 @@ Environment variables
 - `TEMP_DIR` — temporary work directory (default: ./temp)
 - `OUTPUT_DIR` — persistent output directory for converted file(s) (default: ./output)
 - `FEATURE_PROGRESS_THUMBNAIL` — set to `0` to disable progressive thumbnails (default: enabled)
+- `LOGS` — Log level: `info` (default, shows task start/end) or `debug` (detailed image-by-image logs)
 
 Volumes and persistence
 -----------------------

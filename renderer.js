@@ -161,6 +161,7 @@ let totalImages = 0;
 let globalTotalImages = 0; // Backup for Original mode cumulative view
 let filesPageCounts = [];
 let conversionStartTime = 0;
+let cumulativeCompletedPages = 0; // Persistent counter for completed pages (left counter)
 
 // Compression slider
 sliderCompression.addEventListener('input', (e) => {
@@ -180,6 +181,11 @@ const archiveCompSelect = document.getElementById('archiveCompression');
 
 function updateOriginalMode() {
   const isOriginal = dpiSelect.value === 'original';
+  
+  // Reset MaxWidth to "Original Size" when switching to Original mode
+  if (isOriginal) {
+    maxWidthSelect.value = '';
+  }
   
   // Disable and gray out options not applicable in Original mode
   maxWidthSelect.disabled = isOriginal;
@@ -215,8 +221,9 @@ function updateCompressionUI() {
     const isPdf = formatSelect.value === 'pdf';
     const isFolder = formatSelect.value === 'folder';
     
-    // Archive compression
-    if (isOriginal || isCbt || isPdf || isFolder) {
+    // Archive compression (Note: Original mode now supports archive compression)
+    // Only disable for formats that don't support compression (TAR, PDF, Folder)
+    if (isCbt || isPdf || isFolder) {
         archiveCompSelect.disabled = true;
         archiveCompSelect.style.opacity = '0.5';
         archiveCompSelect.style.cursor = 'not-allowed';
@@ -491,9 +498,77 @@ async function handleFiles(fileList) {
   btnConvert.disabled = false;
 }
 
+// --- UPSCALE WARNING HELPERS ---
+async function checkIfUpscalingNeeded(maxWidth) {
+  // Check only image files (not archives/PDFs as they need server analysis)
+  for (const file of selectedFiles) {
+    if (file.name.match(/\.(jpg|jpeg|png|tiff|tif|webp|bmp)$/i)) {
+      try {
+        const img = await createImageBitmap(file);
+        if (img.width < maxWidth) {
+          return true; // At least one image needs upscaling
+        }
+      } catch (e) {
+        console.warn('Unable to check image dimensions:', file.name, e);
+      }
+    }
+  }
+  return false;
+}
+
+function showUpscaleWarning(maxWidth) {
+  return new Promise((resolve) => {
+    const modal = document.getElementById('upscale-warning-modal');
+    const okBtn = document.getElementById('upscale-ok');
+    const cancelBtn = document.getElementById('upscale-cancel');
+    const messageEl = document.getElementById('upscale-warning-message');
+    
+    // Replace {maxWidth} placeholder in translation
+    let message = currentTranslations['upscale_warning.message'] ||
+                  `Some images are smaller than the requested maximum width ({maxWidth}px).`;
+    message = message.replace('{maxWidth}', maxWidth);
+    messageEl.textContent = message;
+    
+    modal.style.display = 'flex';
+    
+    const handleOk = () => {
+      modal.style.display = 'none';
+      okBtn.removeEventListener('click', handleOk);
+      cancelBtn.removeEventListener('click', handleCancel);
+      resolve(true);
+    };
+    
+    const handleCancel = () => {
+      modal.style.display = 'none';
+      okBtn.removeEventListener('click', handleOk);
+      cancelBtn.removeEventListener('click', handleCancel);
+      resolve(false);
+    };
+    
+    okBtn.addEventListener('click', handleOk);
+    cancelBtn.addEventListener('click', handleCancel);
+  });
+}
+
 // --- CONVERSION PROCESS ---
 btnConvert.addEventListener('click', async () => {
   if (!selectedFiles.length) return;
+
+  // Check if upscaling is needed and warn user
+  const maxWidthValue = parseInt(document.getElementById('maxWidth').value);
+  const dpiValue = document.getElementById('dpi').value;
+  
+  if (maxWidthValue && maxWidthValue > 0 && dpiValue !== 'original') {
+    // Check if any image needs upscaling
+    const needsUpscaling = await checkIfUpscalingNeeded(maxWidthValue);
+    
+    if (needsUpscaling) {
+      const userConfirmed = await showUpscaleWarning(maxWidthValue);
+      if (!userConfirmed) {
+        return; // User cancelled
+      }
+    }
+  }
 
   // Immediate feedback
   btnConvert.disabled = true;
@@ -503,6 +578,7 @@ btnConvert.addEventListener('click', async () => {
   conversionStartTime = Date.now();
   fileCounter = 0;
   imageCounter = 0;
+  cumulativeCompletedPages = 0; // Reset cumulative counter
   progressThumb.style.display = 'none';
 
   const requestId = generateUUID();
@@ -535,47 +611,47 @@ btnConvert.addEventListener('click', async () => {
     }
 
     if (data.type === 'progress') {
+      // --- UNIFIED CUMULATIVE PROGRESS (both Original and Normal modes) ---
+      // Always use global total to avoid resetting counter between files
+      totalImages = globalTotalImages;
+
       const isOriginal = document.getElementById('dpi')?.value === 'original';
-
-      if (isOriginal) {
-        // --- ORIGINAL MODE: Cumulative global progress ---
-        // Restore global total if it was overwritten
-        totalImages = globalTotalImages;
-
-        const currentFileIdx = (data.currentFileIndex || 1) - 1;
-        let previousPagesCount = 0;
-        for (let i = 0; i < currentFileIdx; i++) {
-          previousPagesCount += (filesPageCounts[i] || 0);
-        }
-
-        let currentFileConverted = 0;
-        if (data.currentPct === 100) {
-          currentFileConverted = filesPageCounts[currentFileIdx] || 0;
-        }
-
-        imageCounter = previousPagesCount + currentFileConverted;
-
-      } else {
-        // --- NORMAL MODE: Per-file progress (Legacy behavior) ---
-        if (typeof data.totalPages === 'number') totalImages = data.totalPages;
-        imageCounter = data.currentPages || 0;
-      }
-
-      // Update UI
-      if (pageCounterEl) pageCounterEl.innerText = `Page : ${imageCounter} / ${totalImages}`;
       
-      if (totalImages > 0) {
-        const pct = Math.min(100, Math.max(0, (imageCounter / totalImages) * 100));
+      // Left counter (page-counter): Show only completed files (cumulative final count)
+      // Uses persistent cumulative counter to avoid resets
+      const isFileCompleted = (data.currentPct === 100) ||
+                               (data.status && data.status.toLowerCase().includes('assembl'));
+      
+      if (isFileCompleted && data.totalPages !== undefined && data.totalPages > 0) {
+        // File/task completed: increment cumulative counter with actual page count
+        const storageKey = `completed_task_${data.currentFileIndex}`;
         
-        // Fix: In Original mode, do not animate the thumbnail (keep it fully revealed as initialized)
-        if (!isOriginal) {
-            const reveal = progressThumb.querySelector('.color-reveal');
-            if (reveal) reveal.style.width = pct + '%';
+        // Only increment if we haven't already counted this task
+        if (!window[storageKey]) {
+          cumulativeCompletedPages += data.totalPages;
+          window[storageKey] = true; // Mark as counted
         }
-
-        if (progCurrentFill) progCurrentFill.style.width = pct + '%';
-        if (lblCurrentPct) lblCurrentPct.innerText = Math.round(pct) + '%';
       }
+      
+      // Update left counter with persistent cumulative value
+      if (pageCounterEl) pageCounterEl.innerText = `Page : ${cumulativeCompletedPages} / ${totalImages}`;
+      
+      // For thumbnail animation: show progress of CURRENT file only (0-100% per file)
+      // NOT cumulative - resets to 0% for each new file
+      let currentFilePct = 0;
+      if (data.totalPages && data.totalPages > 0) {
+        currentFilePct = Math.min(100, Math.max(0, ((data.currentPages || 0) / data.totalPages) * 100));
+      }
+      
+      // Thumbnail animation uses per-file percentage (resets for each file)
+      if (!isOriginal) {
+          const reveal = progressThumb.querySelector('.color-reveal');
+          if (reveal) reveal.style.width = currentFilePct + '%';
+      }
+
+      // Legacy bars (if they exist) - can be removed or kept
+      if (progCurrentFill) progCurrentFill.style.width = currentFilePct + '%';
+      if (lblCurrentPct) lblCurrentPct.innerText = Math.round(currentFilePct) + '%';
 
       // Update filename display based on server data or current index
       const nameEl = document.getElementById('current-file-name');
@@ -664,6 +740,9 @@ btnConvert.addEventListener('click', async () => {
 
     const result = await response.json();
 
+    // Wait a bit for final SSE events to be processed before showing summary
+    await new Promise(resolve => setTimeout(resolve, 300));
+    
     showSummary(result.stats);
   } catch (e) {
     console.error(e);
@@ -728,7 +807,7 @@ function showSummary(stats) {
 
 // Reset all control gadgets to default
 function resetControls() {
-    dpiSelect.value = 'original';
+    dpiSelect.value = 'original'; // Default to Original mode (fast extraction without re-rendering)
     document.getElementById('maxWidth').value = '';
     colorModeSelect.value = 'jpeg';
     document.getElementById('pageStart').value = '';
@@ -753,6 +832,7 @@ function resetUI() {
   imageCounter = 0;
   totalImages = 0;
   globalTotalImages = 0;
+  cumulativeCompletedPages = 0; // Reset cumulative counter
 
   dropZone.innerHTML = `
     <div style="color: #666; font-size: 0.85em; margin-bottom: 12px; font-weight: 500;">
