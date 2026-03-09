@@ -4,178 +4,99 @@
     <meta charset="UTF-8">
     <title data-i18n="app.title">BDConverter</title>
     <style>
-        body { font-family: 'Segoe UI', sans-serif; background: #1e1e1e; color: #eee; padding: 20px; display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 100vh; margin: 0; box-sizing: border-box; user-select: none; }
-        #console { user-select: text; }
+        /* Prevent FOUC (Flash of Unstyled Content) while theme loads */
+        body { opacity: 0; transition: opacity 0.3s; }
+        body.theme-loaded { opacity: 1; }
         
-        /* Main window container */
-        .main-card {
-            width: 500px; max-width: 95%;
-            background: #2d2d30;
-            border-radius: 20px;
-            padding: 70px 30px 30px 30px;
-            position: relative;
-            box-shadow: 0 20px 60px rgba(0,0,0,0.6);
-            border: 1px solid #3e3e42;
-            display: flex; flex-direction: column; align-items: center;
-            margin-top: 50px;
+        /* Theme switcher button - HIDDEN */
+        #theme-switcher {
+            display: none !important;
         }
-
-        .app-icon {
-            width: 130px; height: 130px;
-            object-fit: contain;
-            position: absolute;
-            top: -65px; left: 50%;
-            transform: translateX(-50%);
-            filter: drop-shadow(0 10px 15px rgba(0,0,0,0.4));
-            transition: transform 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
-            z-index: 10;
-            cursor: pointer;
-        }
-        .app-icon:hover { transform: translateX(-50%) scale(1.1) rotate(5deg); }
-        
-        h1 { margin: 0 0 20px 0; color: #FF9800; letter-spacing: 1px; font-size: 1.8em; text-align: center; }
-
-        #drop-zone {
-            width: 100%; min-height: 180px; height: auto; /* Increased height to avoid text clipping */
-            border: 2px dashed #555; border-radius: 12px;
-            display: flex; flex-direction: column; align-items: center; justify-content: center;
-            margin-bottom: 25px; background: #252526; transition: 0.3s; cursor: pointer;
-            box-sizing: border-box; padding: 15px;
-        }
-        #drop-zone:hover { border-color: #FF9800; background: #2a2a2b; }
-        #drop-zone p { margin: 5px 0; color: #aaa; }
-        #drop-zone .icon { font-size: 36px; margin-bottom: 5px; }
-
-        .controls-grid {
-            display: grid; grid-template-columns: 1fr 1fr; gap: 15px;
-            width: 100%; padding: 0; margin-bottom: 20px;
-        }
-        
-        .control-group { display: flex; flex-direction: column; gap: 5px; }
-        label { font-size: 0.85em; color: #bbb; font-weight: 600; margin-bottom: 2px; }
-        select, input[type=range], input[type=number] {
-            padding: 8px; border-radius: 5px; border: 1px solid #555;
-            background: #3c3c3c; color: white; font-family: inherit;
-        }
-        select:focus, input:focus { border-color: #FF9800; outline: none; }
-        
-        .compression-box { display: flex; align-items: center; gap: 10px; }
-        #compression-val { font-weight: bold; color: #FF9800; width: 35px; text-align: right; }
-
-        .range-inputs { display: flex; gap: 10px; }
-        .range-inputs input { width: 100%; }
-
-        #btn-convert {
-            grid-column: 1 / -1;
-            background: #FF9800; color: white; font-weight: bold; font-size: 1.1em;
-            padding: 12px; border: none; border-radius: 6px; cursor: pointer;
-            transition: 0.2s; margin-top: 10px;
-        }
-        #btn-convert:hover { background: #FB8C00; }
-        #btn-convert:disabled { background: #555; cursor: not-allowed; opacity: 0.7; }
-
-        /* Classic progress bars */
-        .progress-container { width: 90%; margin-top: 10px; display: none; }
-        
-        /* NEW: Progress thumbnail */
-        .progress-thumb {
-            width: 180px;
-            margin: 15px auto;
-            position: relative;
-            display: none; /* Fully hidden on startup */
-            padding: 4px;
-            border: 1px solid #444;
-            border-radius: 10px;
-            box-sizing: border-box;
-            background: #1e1e1e;
-            align-items: center;
-            justify-content: center;
-        }
-
-        /* File counter on the right */
-        .progress-thumb .file-counter {
-            position: absolute;
-            right: -28px;
-            top: 50%;
-            transform: translateY(-50%);
-            font-weight: bold;
-            color: #FF9800;
-            font-size: 1em;
-        }
-
-        /* Inner frame defining final size */
-        .progress-thumb .reveal-frame {
-            width: 100%;
-            aspect-ratio: 2 / 3; /* Comic/Manga ratio, adjustable */
-            display: flex;
-            align-items: center;
-            justify-content: center;
-        }
-
-        .progress-thumb img {
-            width: 100%;
-            display: block;
-            border-radius: 8px;
-        }
-
-        /* Color image progressively revealed from left to right */
-        .progress-thumb .color-reveal {
-            position: relative;
-            z-index: 1;
-            overflow: hidden; /* Actual mask */
-            width: 0%; /* Starts hidden */
-            height: 100%;
-            transition: width 0.6s ease-out;
-            will-change: width;
-        }
-
-        .progress-thumb .color-reveal img {
-            width: 100%;
-            height: 100%;
-            object-fit: cover; /* Avoid top-left corner stretching */
-            display: block;
-            border-radius: 6px; /* Slightly smaller than frame */
-        }
-        .progress-label { display: flex; justify-content: space-between; font-size: 0.9em; margin-bottom: 5px; color: #ccc; font-weight: bold; }
-        .progress-track { width: 100%; height: 25px; background: #333; border-radius: 12px; overflow: hidden; margin-bottom: 15px; box-shadow: inset 0 2px 4px rgba(0,0,0,0.5); }
-        .progress-fill { height: 100%; width: 0%; transition: width 0.3s ease; display: flex; align-items: center; justify-content: flex-end; padding-right: 10px; font-size: 0.8em; color: rgba(255,255,255,0.8); }
-        
-        #prog-total-fill { background: #2196F3; } /* Blue for total */
-        #prog-current-fill { background: #FF9800; } /* Orange for current file */
-
-        /* Technical logs removed from UI */
-
-        /* Mobile layout adjustments */
-        @media (max-width: 550px) {
-            .controls-grid { grid-template-columns: 1fr; }
-            .main-card { padding: 60px 20px 20px 20px; }
-        }
-
-        /* MODAL */
-        .modal {
-            display: none; position: fixed; z-index: 2000; left: 0; top: 0; width: 100%; height: 100%;
-            background-color: rgba(0,0,0,0.7); align-items: center; justify-content: center;
-        }
-        .modal-content {
-            background-color: #2d2d30; padding: 30px; border-radius: 10px;
-            width: 600px; max-width: 90%; /* Enlarged for thumbnails */
-            text-align: center; box-shadow: 0 4px 15px rgba(0,0,0,0.5); border: 1px solid #444;
-        }
-        .modal h2 { color: #FF9800; margin-top: 0; }
-        .summary-stats { text-align: left; margin: 20px 0; background: #333; padding: 15px; border-radius: 5px; }
-        .stat-row { display: flex; justify-content: space-between; margin-bottom: 8px; font-size: 0.9em; }
-        .stat-label { color: #aaa; }
-        .stat-value { font-weight: bold; color: #fff; }
-        .modal-actions { display: flex; gap: 10px; justify-content: center; margin-top: 20px; }
-        .modal-btn {
-            padding: 10px 20px; border: none; border-radius: 5px; cursor: pointer; font-weight: bold;
-            transition: 0.2s;
-        }
-        .btn-primary { background: #FF9800; color: white; }
-        .btn-primary:hover { background: #FB8C00; }
-        .btn-secondary { background: #555; color: white; }
-        .btn-secondary:hover { background: #666; }
     </style>
+    <link rel="stylesheet" id="theme-stylesheet" href="">
+    <script>
+        // Available themes
+        const AVAILABLE_THEMES = ['default', 'neon', 'terminal', 'white'];
+        let currentTheme = 'default';
+        let serverDefaultTheme = 'default';
+        
+        // Load theme dynamically
+        async function loadTheme(themeName) {
+            const themeLink = document.getElementById('theme-stylesheet');
+            themeLink.href = `themes/${themeName}.css`;
+            
+            return new Promise((resolve) => {
+                themeLink.onload = function() {
+                    if (!document.body.classList.contains('theme-loaded')) {
+                        document.body.classList.add('theme-loaded');
+                    }
+                    resolve();
+                };
+            });
+        }
+        
+        // Switch to next theme
+        async function switchTheme() {
+            const currentIndex = AVAILABLE_THEMES.indexOf(currentTheme);
+            const nextIndex = (currentIndex + 1) % AVAILABLE_THEMES.length;
+            currentTheme = AVAILABLE_THEMES[nextIndex];
+            
+            // Save to localStorage
+            localStorage.setItem('bdconverter-theme', currentTheme);
+            
+            // Visual feedback
+            const switcher = document.getElementById('theme-switcher');
+            if (switcher) {
+                switcher.classList.add('switching');
+                setTimeout(() => switcher.classList.remove('switching'), 500);
+                switcher.textContent = `Theme: ${currentTheme} (Shift+F12)`;
+            }
+            
+            await loadTheme(currentTheme);
+            console.log(`Theme switched to: ${currentTheme}`);
+        }
+        
+        // Initialize theme on page load
+        (async function() {
+            try {
+                // Get server default theme
+                const response = await fetch('/theme');
+                const data = await response.json();
+                serverDefaultTheme = data.theme || 'default';
+                
+                // Check if user has overridden the theme locally
+                const savedTheme = localStorage.getItem('bdconverter-theme');
+                currentTheme = savedTheme && AVAILABLE_THEMES.includes(savedTheme) ? savedTheme : serverDefaultTheme;
+                
+                await loadTheme(currentTheme);
+                console.log(`Theme loaded: ${currentTheme} (server default: ${serverDefaultTheme})`);
+                
+            } catch(error) {
+                console.warn('Could not load theme configuration, using default theme');
+                currentTheme = 'default';
+                await loadTheme(currentTheme);
+            }
+        })();
+        
+        // Listen for Shift+F12 to switch themes
+        document.addEventListener('DOMContentLoaded', function() {
+            // Add theme switcher button
+            const switcher = document.createElement('div');
+            switcher.id = 'theme-switcher';
+            switcher.textContent = `Theme: ${currentTheme} (Shift+F12)`;
+            switcher.title = 'Click or press Shift+F12 to switch theme';
+            switcher.onclick = switchTheme;
+            document.body.appendChild(switcher);
+            
+            // Keyboard shortcut: Shift+F12
+            document.addEventListener('keydown', function(e) {
+                if (e.shiftKey && e.key === 'F12') {
+                    e.preventDefault();
+                    switchTheme();
+                }
+            });
+        });
+    </script>
 </head>
 <body>
     <div class="main-card">
@@ -184,7 +105,7 @@
         
         <div id="drop-zone" title="Drag & drop your files here">
             <div style="color: #666; font-size: 0.85em; margin-bottom: 12px; font-weight: 500;">
-                <span data-i18n="dropzone.formats">Accepted formats:</span> PDF, CBZ, CBR, CBT, CB7, ZIP, RAR, TAR, 7Z, Images seules (JPG, PNG, TIFF)
+                <span data-i18n="dropzone.formats">Accepted formats:</span> PDF, CBZ, CBR, CBT, CB7, ZIP, RAR, TAR, 7Z, <span data-i18n="dropzone.standalone_images">Standalone Images</span> (JPG, PNG, TIFF)
             </div>
             <div class="icon">📂</div>
             <div style="font-size: 1.1em; font-weight: bold;" data-i18n="dropzone.title">Drag & drop your files here</div>

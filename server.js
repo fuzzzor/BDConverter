@@ -10,6 +10,11 @@ try { sharp = require('sharp'); } catch(e) { console.warn('Sharp module not foun
 const app = express();
 const port = process.env.PORT || 3111;
 
+// Theme configuration (default, neon, terminal, or white)
+const THEME = process.env.THEME || 'default';
+const ALLOWED_THEMES = ['default', 'neon', 'terminal', 'white'];
+const activeTheme = ALLOWED_THEMES.includes(THEME.toLowerCase()) ? THEME.toLowerCase() : 'default';
+
 // Log level configuration (info by default, debug for detailed logs)
 const LOG_LEVEL = (process.env.LOGS || 'info').toLowerCase();
 const isDebugMode = LOG_LEVEL === 'debug';
@@ -85,6 +90,11 @@ app.use(express.static(__dirname));
 const pkg = require('./package.json');
 app.get('/version', (req, res) => {
     res.json({ version: pkg.version });
+});
+
+// Expose active theme
+app.get('/theme', (req, res) => {
+    res.json({ theme: activeTheme });
 });
 
 const isWin = process.platform === "win32";
@@ -1214,5 +1224,5 @@ app.post('/convert', upload.array('files'), async (req, res) => {
 });
 
 app.listen(port, () => {
-    logInfo(`BDConverter server started on http://localhost:${port} | Log level: ${LOG_LEVEL.toUpperCase()}`);
+    logInfo(`BDConverter server started on http://localhost:${port} | Log level: ${LOG_LEVEL.toUpperCase()} | Theme: ${activeTheme}`);
 });

@@ -12,6 +12,7 @@ Features
 - Convert PDF → CBZ / CBT / CB7 / CBR
 - **Batch conversion** of folders: Drop multiple folders to create one archive per folder.
 - **Merge mode**: Drop multiple standalone images to merge them into a single archive.
+- **Themeable UI**: Choose between `default` and `neon` themes via environment variable.
 - **Image Processing**:
   - Automatic conversion of WEBP/BMP to JPG (preserving quality settings).
   - Smart resizing when DPI is specified.
@@ -56,6 +57,7 @@ services:
     ports:
       - "3111:3111"
     environment:
+      - THEME=default  # or 'neon' for cyberpunk style
       - FEATURE_PROGRESS_THUMBNAIL=1
       - LOGS=info  # or 'debug' for detailed logs
     volumes:
@@ -67,11 +69,48 @@ services:
 Environment variables
 ---------------------
 - `PORT` — HTTP port (default: 3111)
+- `THEME` — UI theme: `default`, `neon`, or `terminal` (default: default)
 - `UPLOAD_DIR` — temporary upload directory (default: ./upload)
 - `TEMP_DIR` — temporary work directory (default: ./temp)
 - `OUTPUT_DIR` — persistent output directory for converted file(s) (default: ./output)
 - `FEATURE_PROGRESS_THUMBNAIL` — set to `0` to disable progressive thumbnails (default: enabled)
 - `LOGS` — Log level: `info` (default, shows task start/end) or `debug` (detailed image-by-image logs)
+
+Themes
+------
+BDConverter supports multiple visual themes that can be selected via the `THEME` environment variable or switched live with **Shift+F12**:
+
+- **default**: Clean dark theme with orange accents - Professional and easy on the eyes (Card-style layout, 500px width)
+- **neon**: Cyberpunk-inspired theme with cyan/magenta neon glows and pulsing animations - Retro-futuristic style (Card-style layout)
+- **terminal**: Hacker/developer theme with monospace font, grid background, and cyan accents - Terminal-inspired aesthetic (Flat layout, 820px width)
+- **white**: Light professional theme with blue accents on light gray background - Clean and modern for daytime use (Flat layout, 820px width)
+
+### Setting a theme
+
+Via environment variable in docker-compose.yml:
+```yaml
+environment:
+  - THEME=terminal
+```
+
+Or when running locally:
+```bash
+# Windows
+set THEME=neon
+node server.js
+
+# Linux/Mac
+THEME=neon node server.js
+```
+
+### Switching themes on-the-fly
+
+Once the application is running, you can switch between themes without restarting:
+- Press **Shift+F12** to cycle through all available themes
+- Click the theme indicator button in the bottom-left corner
+- Your theme preference is saved in browser localStorage and persists across sessions
+
+Themes are loaded dynamically, so switching is instant without page reload!
 
 Volumes and persistence
 -----------------------

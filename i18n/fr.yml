@@ -5,6 +5,7 @@ app:
 dropzone:
   title: "Glisser-déposer vos fichiers pris en charge ICI"
   formats: "Formats acceptés :"
+  standalone_images: "Images seules"
   directories: "Répertoires pris en charge"
   browse_files: "(cliquez pour fichiers)"
   browse_folder: "(ou choisir un dossier)"

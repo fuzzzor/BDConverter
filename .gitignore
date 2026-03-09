@@ -27,6 +27,7 @@ bin/
 
 # Docker
 .dockerignore
+docker-compose.example.yml
 
 # IDE / editors
 .vscode/
