@@ -1,0 +1,465 @@
+body {
+    font-family: 'Comic Neue', 'Comic Sans MS', cursive;
+    background-color: #f0f0f0;
+    /* Comic book background pattern */
+    background-image: 
+        radial-gradient(#ccc 10%, transparent 10%),
+        radial-gradient(#ccc 10%, transparent 10%);
+    background-size: 20px 20px;
+    background-position: 0 0, 10px 10px;
+    color: #333;
+    padding: 20px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    min-height: 100vh;
+    margin: 0;
+    box-sizing: border-box;
+    overflow-x: hidden;
+}
+
+/* Background Texture and Lagaffe */
+body::before {
+    content: "";
+    position: fixed;
+    top: 0; left: 0; width: 100%; height: 100%;
+    background-image: 
+        url('../icons/lagaffe.png'),
+        url('https://www.transparenttextures.com/patterns/comic-book.png');
+    background-repeat: no-repeat, repeat;
+    background-position: calc(100% - 20px) 20px, 0 0;
+    background-size: 450px auto, auto; /* Even bigger Gaston */
+    opacity: 0.95;
+    pointer-events: none;
+    z-index: 100;
+}
+
+/* Bubble Styles */
+html::after {
+    content: "C'EST MAGIQUE !";
+    position: fixed;
+    font-family: 'Bangers', cursive;
+    background: #fff;
+    border: 4px solid #000;
+    border-radius: 50% 50% 50% 10%;
+    padding: 30px 50px;
+    top: 5vh;
+    left: 2vw;
+    transform: rotate(-8deg);
+    font-size: 4vw;
+    z-index: -3;
+    box-shadow: 10px 10px 0px rgba(0,0,0,0.1);
+}
+
+html::before {
+    content: "VITE, VITE !";
+    position: fixed;
+    font-family: 'Bangers', cursive;
+    background: #fff;
+    border: 4px solid #000;
+    border-radius: 50% 50% 10% 50%;
+    padding: 30px 50px;
+    bottom: 5vh;
+    left: 5vw; /* Moved to Left side */
+    transform: rotate(10deg);
+    font-size: 3.5vw;
+    z-index: -3;
+    box-shadow: 10px 10px 0px rgba(0,0,0,0.1);
+}
+
+body::after {
+    content: "PAR ICI !";
+    position: fixed;
+    font-family: 'Bangers', cursive;
+    background: #fff;
+    border: 4px solid #000;
+    border-radius: 50% 10% 50% 50%;
+    padding: 25px 45px;
+    bottom: 25vh;
+    left: 2vw;
+    transform: rotate(-20deg);
+    font-size: 3vw;
+    z-index: -2;
+    box-shadow: 10px 10px 0px rgba(0,0,0,0.1);
+}
+
+#drop-zone::after {
+    content: "LÂCHEZ TOUT !";
+    position: absolute;
+    font-family: 'Bangers', cursive;
+    background: #E74C3C;
+    border: 3px solid #000;
+    border-radius: 20px;
+    padding: 10px;
+    bottom: -20px;
+    right: -20px;
+    transform: rotate(10deg);
+    color: #fff;
+    font-size: 0.8em;
+    box-shadow: 4px 4px 0px #000;
+}
+
+.main-card {
+    width: 550px;
+    max-width: 95%;
+    background: #fff;
+    border: 4px solid #000;
+    border-radius: 0;
+    padding: 80px 40px 40px 40px;
+    position: relative;
+    box-shadow: 15px 15px 0px #000;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    margin-top: 50px;
+    transform: rotate(1deg);
+}
+
+.main-card::after {
+    content: "CONVERTIS-MOI !";
+    position: absolute;
+    font-family: 'Bangers', cursive;
+    background: #E74C3C;
+    border: 3px solid #000;
+    border-radius: 50% 50% 0 50%;
+    padding: 10px 20px;
+    bottom: 20px;
+    left: -100px;
+    transform: rotate(-10deg);
+    color: #fff;
+    font-size: 1.2em;
+    z-index: 5;
+    box-shadow: 5px 5px 0px #000;
+}
+
+.app-icon {
+    width: 140px;
+    height: 140px;
+    position: absolute;
+    top: -70px;
+    left: 50%;
+    transform: translateX(-50%) rotate(-5deg);
+    filter: drop-shadow(5px 5px 0px #000);
+    z-index: 20;
+    transition: transform 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+}
+
+.app-icon:hover {
+    transform: translateX(-50%) scale(1.1) rotate(10deg);
+}
+
+h1 {
+    font-family: 'Bangers', cursive;
+    font-size: 3.5em;
+    margin: 0 0 20px 0;
+    color: #FFDE00;
+    text-shadow: 4px 4px 0px #000, -1px -1px 0px #000, 1px -1px 0px #000, -1px 1px 0px #000;
+    letter-spacing: 3px;
+    transform: skew(-5deg);
+    position: relative;
+}
+
+#drop-zone {
+    width: 100%;
+    min-height: 150px;
+    border: 3px dashed #000;
+    background: #FFDE00;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    margin-bottom: 25px;
+    cursor: pointer;
+    transition: 0.2s;
+    box-shadow: 5px 5px 0px #000;
+    padding: 20px;
+    box-sizing: border-box;
+    position: relative;
+}
+
+#drop-zone:hover {
+    background: #FFE600;
+    transform: translate(-2px, -2px);
+    box-shadow: 7px 7px 0px #000;
+}
+
+#drop-zone p {
+    font-weight: bold;
+    color: #000;
+}
+
+#drop-zone .icon {
+    font-size: 50px;
+    margin-bottom: 10px;
+}
+
+.controls-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 20px;
+    width: 100%;
+    background: #3498DB;
+    padding: 20px;
+    border: 3px solid #000;
+    box-shadow: 8px 8px 0px #000;
+    margin-bottom: 30px;
+    box-sizing: border-box;
+}
+
+label {
+    font-weight: 900;
+    text-transform: uppercase;
+    color: #fff;
+    text-shadow: 2px 2px 0px #000;
+    font-size: 0.9em;
+    margin-bottom: 5px;
+}
+
+select, input[type=number] {
+    padding: 10px;
+    border: 3px solid #000;
+    background: #fff;
+    font-family: 'Comic Neue', cursive;
+    font-weight: bold;
+    border-radius: 0;
+}
+
+select:focus, input:focus {
+    outline: none;
+    background: #FFDE00;
+}
+
+.compression-box {
+    background: #fff;
+    padding: 10px;
+    border: 2px solid #000;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+#compression-val {
+    font-family: 'Bangers', cursive;
+    font-size: 1.5em;
+    color: #E74C3C;
+}
+
+#btn-convert {
+    grid-column: 1 / -1;
+    background: #E74C3C;
+    color: #fff;
+    font-family: 'Bangers', cursive;
+    font-size: 2em;
+    padding: 15px;
+    border: 4px solid #000;
+    cursor: pointer;
+    box-shadow: 6px 6px 0px #000;
+    transition: 0.1s;
+    margin-top: 10px;
+    text-transform: uppercase;
+    letter-spacing: 2px;
+}
+
+#btn-convert:hover {
+    background: #FF3E2E;
+    transform: translate(-2px, -2px);
+    box-shadow: 8px 8px 0px #000;
+}
+
+#btn-convert:active {
+    transform: translate(2px, 2px);
+    box-shadow: 2px 2px 0px #000;
+}
+
+#btn-convert:disabled {
+    background: #95a5a6;
+    cursor: not-allowed;
+    box-shadow: none;
+    transform: none;
+}
+
+/* Progress bars */
+.progress-container {
+    width: 100%;
+    margin-top: 20px;
+    display: none;
+}
+
+.progress-track {
+    height: 30px;
+    border: 3px solid #000;
+    background: #fff;
+    border-radius: 0;
+    overflow: hidden;
+    position: relative;
+    box-shadow: 4px 4px 0px #000;
+}
+
+.progress-fill {
+    height: 100%;
+    transition: width 0.3s ease;
+}
+
+#prog-total-fill {
+    background: #2ECC71;
+}
+
+#prog-current-fill {
+    background: #FFDE00;
+}
+
+/* Modals */
+.modal {
+    display: none;
+    position: fixed;
+    z-index: 2000;
+    left: 0;
+    top: 0;
+    width: 100%;
+    height: 100%;
+    background-color: rgba(0,0,0,0.8);
+    align-items: center;
+    justify-content: center;
+}
+
+.modal-content {
+    background: #fff;
+    border: 5px solid #000;
+    border-radius: 0;
+    box-shadow: 20px 20px 0px #000;
+    padding: 40px;
+}
+
+.modal h2 {
+    font-family: 'Bangers', cursive;
+    font-size: 3em;
+    color: #E74C3C;
+    text-shadow: 3px 3px 0px #000;
+}
+
+.modal-btn {
+    font-family: 'Bangers', cursive;
+    font-size: 1.5em;
+    padding: 10px 30px;
+    border: 3px solid #000;
+    box-shadow: 5px 5px 0px #000;
+    border-radius: 0;
+}
+
+.btn-primary { background: #FFDE00; color: #000; }
+.btn-secondary { background: #3498DB; color: #fff; }
+
+.summary-stats {
+    text-align: left;
+    margin: 20px 0;
+    background: #FFDE00;
+    padding: 15px;
+    border: 2px solid #000;
+    box-shadow: 5px 5px 0px #000;
+}
+
+.stat-row {
+    display: flex;
+    justify-content: space-between;
+    margin-bottom: 8px;
+    font-size: 0.9em;
+    font-weight: bold;
+}
+
+.stat-label { color: #000; }
+.stat-value { font-weight: bold; color: #E74C3C; }
+
+.modal-actions {
+    display: flex;
+    gap: 15px;
+    justify-content: center;
+    margin-top: 20px;
+}
+
+#theme-switcher {
+    display: none !important;
+}
+
+/* Add some "stickers" */
+.main-card::before {
+    content: "CONVERT !";
+    position: absolute;
+    top: 20px;
+    right: -30px;
+    background: #E74C3C;
+    color: #fff;
+    padding: 10px;
+    font-family: 'Bangers', cursive;
+    transform: rotate(20deg);
+    border: 3px solid #000;
+    box-shadow: 4px 4px 0px #000;
+    font-size: 1.5em;
+    z-index: 5;
+}
+
+/* Progress thumb */
+.progress-thumb {
+    border: 4px solid #000;
+    background: #fff;
+    box-shadow: 8px 8px 0px #000;
+    padding: 10px;
+    transform: rotate(-2deg);
+    display: none;
+    width: 180px;
+    margin: 15px auto;
+    position: relative;
+    align-items: center;
+    justify-content: center;
+    box-sizing: border-box;
+}
+
+.progress-thumb .file-counter {
+    position: absolute;
+    right: -28px;
+    top: 50%;
+    transform: translateY(-50%);
+    font-family: 'Bangers', cursive;
+    color: #E74C3C;
+    font-size: 1.5em;
+    text-shadow: 1px 1px 0px #000;
+}
+
+.progress-thumb .reveal-frame {
+    width: 100%;
+    aspect-ratio: 2 / 3;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.progress-thumb img {
+    width: 100%;
+    display: block;
+}
+
+.progress-thumb .color-reveal {
+    position: relative;
+    z-index: 1;
+    overflow: hidden;
+    width: 0%;
+    height: 100%;
+    transition: width 0.6s ease-out;
+    will-change: width;
+}
+
+.progress-thumb .color-reveal img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
+}
+
+.progress-label {
+    display: flex;
+    justify-content: space-between;
+    font-size: 0.9em;
+    margin-bottom: 5px;
+    color: #000;
+    font-weight: bold;
+}

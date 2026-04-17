@@ -10,9 +10,9 @@ try { sharp = require('sharp'); } catch(e) { console.warn('Sharp module not foun
 const app = express();
 const port = process.env.PORT || 3111;
 
-// Theme configuration (default, neon, terminal, or white)
+// Theme configuration (default, neon, terminal, white, or comic)
 const THEME = process.env.THEME || 'default';
-const ALLOWED_THEMES = ['default', 'neon', 'terminal', 'white'];
+const ALLOWED_THEMES = ['default', 'neon', 'terminal', 'white', 'comic'];
 const activeTheme = ALLOWED_THEMES.includes(THEME.toLowerCase()) ? THEME.toLowerCase() : 'default';
 
 // Log level configuration (info by default, debug for detailed logs)
