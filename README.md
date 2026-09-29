@@ -12,19 +12,34 @@ Features
 - Convert PDF → CBZ / CBT / CB7 / CBR
 - **Batch conversion** of folders: Drop multiple folders to create one archive per folder.
 - **Merge mode**: Drop multiple standalone images to merge them into a single archive.
-- **Themeable UI**: Choose between `default` and `neon` themes via environment variable.
+- **Themeable UI**: Choose between `default`, `neon`, `terminal`, `white` and `comic` themes via environment variable.
 - **Image Processing**:
   - Automatic conversion of WEBP/BMP to JPG (preserving quality settings).
   - Smart resizing when DPI is specified.
   - **Auto-Split Double Pages**: Automatically detects landscape scans (width > height * 1.2) and splits them into two vertical pages. Supports Left-to-Right (Comics) and Right-to-Left (Manga) reading directions.
-- **New Output Formats**:
-  - CBR (RAR4) for legacy compatibility.
+- **Output Formats**:
+  - CBR (RAR5) and CBR (RAR4 `-ma4`) for legacy compatibility.
   - Directory (Folder extraction) to extract images without archiving.
+- **Advanced Retouching Panel** (opt-in, render mode only):
+  - Crop margins (trim white/black borders from scanned pages).
+  - Deskew (auto-correct scan tilt ±5°).
+  - Auto-contrast (normalise brightness range, ideal for yellowed scans).
+  - Brightness and Saturation adjustments (±30%).
+  - **Before/After Preview**: Compare the effect of retouching on a random page without launching a full conversion.
 - Render mode (pdftoppm): control DPI, image format (jpeg/png/tiff), JPEG quality, color mode.
 - Original mode (pdfimages -all): extract native images without recompression.
 - Real-time progress updates via Server-Sent Events (SSE) at /events.
 - Progressive thumbnail generation and a final base64-encoded thumbnail per result.
 - Persistent output directory configurable via environment variable.
+
+Changelog
+---------
+### v1.3.1
+- **Fix: Before/After preview** — Canvas clipping (`beginPath` before each `clip`) corrected; both images now properly overlaid with the slider.
+- **Fix: Preview image pipeline** — "Before" is now the untouched original resized to 400px; "After" applies geometry (rotation/deskew/crop) then color (contrast/brightness/saturation) on the same base image.
+- **Fix: Preview sizing** — Modal width reduced to 440px, canvas capped at 400px, labels aligned under the canvas.
+- **Fix: Progress counters** — Removed dead variables (`imageCounter`, `globalTotalImages`). Fixed `window[storageKey]` leak between conversions (replaced with a `Set` cleared at each session start and `resetUI()`).
+- **Improvement: Comic theme** — Added `comic` as a 5th UI theme (Bangers font, pop-art style).
 
 Quick start
 -----------
@@ -90,17 +105,17 @@ BDConverter supports multiple visual themes that can be selected via the `THEME`
 Via environment variable in docker-compose.yml:
 ```yaml
 environment:
-  - THEME=terminal
+  - THEME=default    # terminal, comics, neon, white
 ```
 
 Or when running locally:
 ```bash
 # Windows
-set THEME=neon
+set THEME=comics
 node server.js
 
 # Linux/Mac
-THEME=neon node server.js
+THEME=comics node server.js
 ```
 
 ### Switching themes on-the-fly
@@ -118,5 +133,5 @@ Bind a host folder to `/app/output` (or set `OUTPUT_DIR`) to keep generated arch
 
 Security
 --------
-This app performs file processing on uploaded PDFs. Run the service behind a reverse proxy if exposing to the public internet. Consider resource limits (CPU, memory) and volume quotas to avoid abuse.
+WARNING: This app performs file processing on uploaded PDFs. Run the service behind a reverse proxy if exposing to the public internet. Consider resource limits (CPU, memory) and volume quotas to avoid abuse.
 

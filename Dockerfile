@@ -1,15 +1,26 @@
-# Use a lightweight Node.js base image
-FROM node:20-bullseye-slim
+# Use an up-to-date, fully supported Node.js base image (Debian Bookworm, Node 22 LTS)
+FROM node:22-bookworm-slim
 
-# Enable non-free repositories for RAR support
-RUN sed -i 's/main/main contrib non-free/g' /etc/apt/sources.list
+# Enable non-free repositories for RAR support (Bookworm uses deb822 sources by default,
+# so we fall back to a classic sources.list to keep apt behavior predictable/updatable)
+RUN echo "deb http://deb.debian.org/debian bookworm main contrib non-free non-free-firmware" > /etc/apt/sources.list \
+    && echo "deb http://deb.debian.org/debian bookworm-updates main contrib non-free non-free-firmware" >> /etc/apt/sources.list \
+    && echo "deb http://deb.debian.org/debian-security bookworm-security main contrib non-free non-free-firmware" >> /etc/apt/sources.list \
+    && rm -f /etc/apt/sources.list.d/debian.sources
 
-# Install poppler-utils for PDF conversion and archiving tools (7z, tar, rar)
+# Install poppler-utils and 7zip via apt
 RUN apt-get update && apt-get install -y \
     poppler-utils \
     p7zip-full \
-    rar \
+    wget \
     && rm -rf /var/lib/apt/lists/*
+
+# Install RAR 6.24 from RARLAB (pinned — RAR 7.x dropped -ma4/RAR4 support)
+RUN wget -q https://www.rarlab.com/rar/rarlinux-x64-624.tar.gz -O /tmp/rar.tar.gz \
+    && tar -xzf /tmp/rar.tar.gz -C /tmp \
+    && cp /tmp/rar/rar /usr/local/bin/rar \
+    && chmod +x /usr/local/bin/rar \
+    && rm -rf /tmp/rar /tmp/rar.tar.gz
 
 # Create working directory
 WORKDIR /app

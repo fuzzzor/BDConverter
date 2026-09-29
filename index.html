@@ -215,23 +215,130 @@
             </div>
         </div>
 
-        <!-- Split double-pages (landscape scans) -->
-        <div class="control-group">
-            <label data-i18n="controls.split.label">Split Double Pages</label>
-            <select id="splitDouble" title="Split landscape (double) pages automatically">
-                <option value="no" data-i18n="controls.split.options.no">No</option>
-                <option value="auto" selected data-i18n="controls.split.options.auto">Auto (detect and split)</option>
-            </select>
-        </div>
+        <!-- Advanced retouching (collapsible panel) -->
+        <details id="advanced-retouch" class="control-group advanced-panel" style="grid-column: 1 / -1;">
+            <summary>
+                <span class="advanced-summary-title">
+                    <span class="advanced-summary-icon">🔧</span>
+                    <span data-i18n="controls.advanced.label">Retouche avancée (scans physiques)</span>
+                </span>
+                <span id="advanced-active-badge" class="advanced-badge" style="display:none;">0</span>
+            </summary>
 
-        <!-- Reading direction (for ordering halves) -->
-        <div class="control-group">
-            <label data-i18n="controls.reading.label">Reading Direction</label>
-            <select id="readingDir" title="Page order after splitting">
-                <option value="ltr" selected data-i18n="controls.reading.direction.ltr">Left -> Right (Comics/BD)</option>
-                <option value="rtl" data-i18n="controls.reading.direction.rtl">Right -> Left (Manga)</option>
-            </select>
-        </div>
+            <div class="advanced-panel-body">
+
+                <!-- Section: Pages -->
+                <div class="advanced-section">
+                    <div class="advanced-section-title">
+                        <span class="advanced-section-icon">📄</span>
+                        <span data-i18n="controls.advanced.section_pages">Pages</span>
+                    </div>
+                    <div class="advanced-section-grid cols-2">
+                        <div class="control-group">
+                            <label data-i18n="controls.split.label">Split Double Pages</label>
+                            <select id="splitDouble" title="Split landscape (double) pages automatically">
+                                <option value="no" data-i18n="controls.split.options.no">No</option>
+                                <option value="auto" selected data-i18n="controls.split.options.auto">Auto (detect and split)</option>
+                            </select>
+                        </div>
+                        <div class="control-group">
+                            <label data-i18n="controls.reading.label">Reading Direction</label>
+                            <select id="readingDir" title="Page order after splitting">
+                                <option value="ltr" selected data-i18n="controls.reading.direction.ltr">Left -> Right (Comics/BD)</option>
+                                <option value="rtl" data-i18n="controls.reading.direction.rtl">Right -> Left (Manga)</option>
+                            </select>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Section: Geometry -->
+                <div class="advanced-section">
+                    <div class="advanced-section-title">
+                        <span class="advanced-section-icon">📐</span>
+                        <span data-i18n="controls.advanced.section_geometry">Géométrie</span>
+                    </div>
+                    <div class="advanced-section-grid cols-2">
+                        <div class="control-group">
+                            <label data-i18n="controls.crop.label">Rogner les marges</label>
+                            <select id="crop-margins" title="Supprime les bordures blanches/noires laissées par le scanner.">
+                                <option value="" selected data-i18n="controls.crop.none">Non</option>
+                                <option value="10" data-i18n="controls.crop.light">Léger (seuil 10)</option>
+                                <option value="20" data-i18n="controls.crop.normal">Normal (seuil 20)</option>
+                                <option value="40" data-i18n="controls.crop.aggressive">Agressif (seuil 40)</option>
+                            </select>
+                        </div>
+                        <div class="control-group">
+                            <label class="toggle-row" title="Corrige automatiquement l'inclinaison des pages scannées de travers (±5°).">
+                                <span class="toggle-switch">
+                                    <input type="checkbox" id="deskew">
+                                    <span class="toggle-slider"></span>
+                                </span>
+                                <span class="toggle-text">
+                                    <span data-i18n="controls.deskew.label">Redressement auto (deskew)</span>
+                                    <span class="perf-badge" title="Traitement plus lent (~0.1-0.2s/page)">🐢</span>
+                                </span>
+                            </label>
+                            <small data-i18n="controls.deskew.hint">Corrige les pages scannées de travers (±5°).</small>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Section: Color & contrast -->
+                <div class="advanced-section">
+                    <div class="advanced-section-title">
+                        <span class="advanced-section-icon">🎨</span>
+                        <span data-i18n="controls.advanced.section_color">Couleur &amp; Contraste</span>
+                    </div>
+                    <div class="advanced-section-grid">
+                        <div class="control-group full-row">
+                            <label class="toggle-row" title="Normalise la plage de luminosité (idéal pour les vieux scans jaunis).">
+                                <span class="toggle-switch">
+                                    <input type="checkbox" id="auto-contrast">
+                                    <span class="toggle-slider"></span>
+                                </span>
+                                <span class="toggle-text">
+                                    <span data-i18n="controls.auto_contrast.label">Contraste automatique</span>
+                                    <span class="toggle-hint">(<span data-i18n="controls.auto_contrast.hint">Idéal pour les vieux scans jaunis.</span>)</span>
+                                </span>
+                            </label>
+                        </div>
+                    </div>
+                    <div class="advanced-section-grid cols-2 sliders-row">
+                        <div class="control-group">
+                            <label class="slider-label-row">
+                                <span data-i18n="controls.brightness.label">Luminosité</span>
+                                <span id="brightness-val" class="slider-val">0%</span>
+                            </label>
+                            <div class="slider-track">
+                                <input type="range" id="brightness" class="bidir-slider" min="-30" max="30" value="0" step="1" title="Ajuste la luminosité de l'image (0% = normale).">
+                            </div>
+                            <div class="slider-minmax-track"><span>-30%</span><span>+30%</span></div>
+                        </div>
+                        <div class="control-group">
+                            <label class="slider-label-row">
+                                <span data-i18n="controls.saturation.label">Saturation</span>
+                                <span id="saturation-val" class="slider-val">0%</span>
+                            </label>
+                            <div class="slider-track">
+                                <input type="range" id="saturation" class="bidir-slider" min="-30" max="30" value="0" step="1" title="Ajuste la saturation des couleurs de l'image (0% = normale).">
+                            </div>
+                            <div class="slider-minmax-track"><span>-30%</span><span>+30%</span></div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Preview button (before/after on a random page from the source) -->
+                <div class="control-group full-row advanced-preview-row">
+                    <button type="button" id="btn-preview" class="preview-btn" disabled>
+                        <span data-i18n="controls.preview.button">Aperçu avant/après</span>
+                    </button>
+                    <small data-i18n="controls.preview.hint">Teste les réglages sur une page prise au hasard dans la source, sans lancer la conversion complète.</small>
+                </div>
+            </div>
+            <div id="advanced-original-hint" style="display:none;" data-i18n="controls.advanced.disabled_hint">
+                ⚠️ Indisponible en mode Original (pas de pipeline de rendu).
+            </div>
+        </details>
 
             <button id="btn-convert" disabled data-i18n="buttons.convert">Convert file(s)</button>
         </div>
@@ -289,7 +396,31 @@
             </div>
         </div>
     </div>
-    
+
+    <!-- PREVIEW MODAL (before/after comparison slider) -->
+    <div id="preview-modal" class="modal">
+        <div class="modal-content preview-modal-content">
+            <h2 data-i18n="controls.preview.title">👁️ Aperçu avant/après</h2>
+            <div id="preview-page-info" class="preview-page-info"></div>
+            <div id="preview-loading" class="preview-loading" style="display:none;">
+                <span data-i18n="controls.preview.loading">Génération de l'aperçu...</span>
+            </div>
+            <div id="preview-compare" class="preview-compare" style="display:none;">
+                <!-- Single canvas: both images drawn at identical size by JS -->
+                <canvas id="preview-canvas" class="preview-canvas"></canvas>
+                <div class="preview-labels">
+                    <span data-i18n="controls.preview.before">Avant</span>
+                    <span data-i18n="controls.preview.after">Après</span>
+                </div>
+            </div>
+            <div id="preview-error" class="preview-error" style="display:none;"></div>
+            <div class="modal-actions">
+                <button class="modal-btn btn-secondary" id="btn-preview-shuffle" data-i18n="controls.preview.shuffle">🎲 Autre page</button>
+                <button class="modal-btn btn-primary" id="btn-preview-close" data-i18n="buttons.close">Close</button>
+            </div>
+        </div>
+    </div>
+
     <input type="file" id="folderInput" webkitdirectory style="display:none">
     
     <!-- PDF.js for local page analysis -->

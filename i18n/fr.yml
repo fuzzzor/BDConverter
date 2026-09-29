@@ -95,6 +95,48 @@ controls:
       ltr: "Gauche -> Droite (BD)"
       rtl: "Droite -> Gauche (Manga)"
 
+  advanced:
+    label: "Retouche avancée (scans physiques)"
+    section_pages: "Pages"
+    section_geometry: "Géométrie"
+    section_color: "Couleur & Contraste"
+    disabled_hint: "⚠️ Indisponible en mode Original (pas de pipeline de rendu)."
+
+  crop:
+    label: "Rogner les marges"
+    none: "Non"
+    light: "Léger (seuil 10)"
+    normal: "Normal (seuil 20)"
+    aggressive: "Agressif (seuil 40)"
+
+  deskew:
+    label: "Redressement auto (deskew)"
+    hint: "Corrige les pages scannées de travers (±5°)."
+
+  auto_contrast:
+    label: "Contraste automatique"
+    hint: "Idéal pour les vieux scans jaunis."
+
+  brightness:
+    label: "Luminosité"
+    normal: "Normale"
+    p15: "+15% (scans sombres)"
+    p30: "+30% (très sombres)"
+    m15: "-15% (surexposés)"
+
+  saturation:
+    label: "Saturation"
+
+  preview:
+    button: "👁️ Aperçu avant/après"
+    hint: "Teste les réglages sur une page prise au hasard dans la source, sans lancer la conversion complète."
+    title: "👁️ Aperçu avant/après"
+    loading: "Génération de l'aperçu..."
+    before: "Avant"
+    after: "Après"
+    shuffle: "🎲 Autre page"
+    error: "Erreur d'aperçu : {error}"
+
   buttons:
   convert: "Convertir fichier(s)"
   starting: "Démarrage..."
@@ -136,3 +178,8 @@ tooltips:
   quality: "Qualité de l'image JPEG (80% est un bon compromis)."
   split: "Divise automatiquement les images larges (paysage) en deux pages simples."
   reading: "Ordre des pages après découpage."
+  crop: "Supprime les bordures blanches/noires laissées par le scanner."
+  deskew: "Corrige automatiquement l'inclinaison des pages scannées de travers (±5°). Légèrement plus lent."
+  auto_contrast: "Normalise la plage de luminosité de l'image (idéal pour les vieux scans jaunis)."
+  brightness: "Ajuste la luminosité de l'image."
+  saturation: "Ajuste la saturation des couleurs de l'image."

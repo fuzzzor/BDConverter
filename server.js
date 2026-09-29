@@ -187,6 +187,287 @@ function getPageCount(filePath) {
     });
 }
 
+// --- ADVANCED RETOUCHING HELPERS (Crop margins / Deskew / Contrast / Brightness / Saturation) ---
+// These are opt-in, render-mode-only features (Sharp pipeline required, disabled in "Original" mode).
+
+// Detect page skew angle (+/-5 degrees) using a simplified horizontal-projection heuristic.
+// Optimized for speed: analysis performed on a small (~500px) grayscale raw buffer,
+// with row/column sub-sampling and a coarse-then-fine angle search.
+async function detectSkewAngle(sharpInstance) {
+    try {
+        const { data, info } = await sharpInstance
+            .clone()
+            .resize(500, null, { fit: 'inside', withoutEnlargement: true })
+            .grayscale()
+            .raw()
+            .toBuffer({ resolveWithObject: true });
+
+        const w = info.width;
+        const h = info.height;
+        if (!w || !h) return 0;
+
+        const computeScore = (angleDeg) => {
+            const rad = (angleDeg * Math.PI) / 180;
+            const tan = Math.tan(rad);
+            let score = 0;
+            for (let y = 0; y < h; y += 2) { // sample every 2nd row for performance
+                let lineSum = 0;
+                let count = 0;
+                for (let x = 0; x < w; x += 2) { // sample every 2nd column for performance
+                    const sy = Math.round(y + x * tan);
+                    if (sy >= 0 && sy < h) {
+                        lineSum += data[sy * w + x];
+                        count++;
+                    }
+                }
+                if (count > 0) {
+                    const avg = lineSum / count;
+                    score += (avg - 128) * (avg - 128);
+                }
+            }
+            return score;
+        };
+
+        // Coarse search: -5 to +5 degrees by 1 degree steps
+        let best = { angle: 0, score: -Infinity };
+        for (let angle = -5; angle <= 5; angle += 1) {
+            const score = computeScore(angle);
+            if (score > best.score) best = { angle, score };
+        }
+        // Fine search: refine around the best coarse angle (+/-0.9 by 0.2 steps)
+        const coarseAngle = best.angle;
+        for (let angle = coarseAngle - 0.9; angle <= coarseAngle + 0.9; angle += 0.2) {
+            const score = computeScore(angle);
+            if (score > best.score) best = { angle, score };
+        }
+        return best.angle;
+    } catch (e) {
+        logWarn('[DESKEW] Detection error:', e.message);
+        return 0;
+    }
+}
+
+// Pre-resize adjustments: Deskew (rotation correction) then Crop margins (.trim)
+// Must run BEFORE resize/maxWidth so the width constraint applies to the actual content.
+async function applyPreResizeAdjustments(pipeline, opts) {
+    const deskew = opts.deskew, cropMargins = opts.cropMargins, logPrefix = opts.logPrefix || '';
+    if (deskew) {
+        try {
+            const skewAngle = await detectSkewAngle(pipeline);
+            if (Math.abs(skewAngle) > 0.3) { // ignore corrections below 0.3 degrees (avoid false positives)
+                logDebug(`${logPrefix}[DESKEW] Detected angle: ${skewAngle.toFixed(2)} deg - correcting`);
+                pipeline = pipeline.rotate(-skewAngle, { background: { r: 255, g: 255, b: 255, alpha: 1 } });
+            }
+        } catch (e) {
+            logWarn(`${logPrefix}[DESKEW] Failed:`, e.message);
+        }
+    }
+    if (cropMargins) {
+        const threshold = parseInt(cropMargins, 10);
+        if (!isNaN(threshold) && threshold > 0) {
+            try {
+                pipeline = pipeline.trim({ threshold: Math.min(99, Math.max(1, threshold)) });
+            } catch (e) {
+                logWarn(`${logPrefix}[CROP] Trim failed:`, e.message);
+            }
+        }
+    }
+    return pipeline;
+}
+
+// Post-resize adjustments: Auto-contrast (.normalise) then Brightness/Saturation (.modulate)
+// Runs AFTER resize/maxWidth, BEFORE color mode conversion (grayscale/mono).
+function applyPostResizeAdjustments(pipeline, opts) {
+    const autoContrast = opts.autoContrast, brightness = opts.brightness, saturation = opts.saturation;
+    if (autoContrast) {
+        pipeline = pipeline.normalise({ lower: 1, upper: 99 });
+    }
+    const bVal = brightness ? parseFloat(brightness) : 1;
+    const sVal = saturation ? parseFloat(saturation) : 1;
+    const modOpts = {};
+    if (!isNaN(bVal) && bVal !== 1) modOpts.brightness = bVal;
+    if (!isNaN(sVal) && sVal !== 1) modOpts.saturation = sVal;
+    if (Object.keys(modOpts).length > 0) {
+        pipeline = pipeline.modulate(modOpts);
+    }
+    return pipeline;
+}
+
+// --- PREVIEW HELPERS: extract a single page (image/PDF/archive) for before/after comparison ---
+
+// Extract a preview page buffer from an uploaded file (image, PDF, or archive).
+// If requestedIndex is null/invalid, a random page is picked among the available pages.
+async function extractPreviewPage(file, requestedIndex) {
+    const originalName = file.originalname || '';
+    const ext = path.extname(originalName).toLowerCase();
+    const tempDir = path.join(TEMP_DIR, `preview_${Date.now()}_${Math.random().toString(36).substring(7)}`);
+    fs.mkdirSync(tempDir, { recursive: true });
+
+    try {
+        // Case 1: standalone image
+        if (['.jpg', '.jpeg', '.png', '.tif', '.tiff', '.bmp', '.webp'].includes(ext)) {
+            const buffer = fs.readFileSync(file.path);
+            return { buffer, totalPages: 1, pageIndex: 0 };
+        }
+
+        // Case 2: PDF
+        if (ext === '.pdf') {
+            let pdfPath = file.path;
+            if (!pdfPath.toLowerCase().endsWith('.pdf')) {
+                const newPath = pdfPath + '.pdf';
+                fs.renameSync(pdfPath, newPath);
+                pdfPath = newPath;
+                file.path = newPath;
+            }
+            const totalPages = (await getPageCount(pdfPath)) || 1;
+            const pageIndex = (requestedIndex !== null && requestedIndex >= 0 && requestedIndex < totalPages)
+                ? requestedIndex
+                : Math.floor(Math.random() * totalPages);
+            const pageNum = pageIndex + 1;
+            const outPrefix = path.join(tempDir, 'preview');
+            await new Promise((resolve, reject) => {
+                execFile(popplerPath, ['-jpeg', '-r', '100', '-f', String(pageNum), '-l', String(pageNum), pdfPath, outPrefix], (err) => {
+                    if (err) reject(err); else resolve();
+                });
+            });
+            const renderedFiles = fs.readdirSync(tempDir).filter(f => /\.(jpg|jpeg)$/i.test(f));
+            if (renderedFiles.length === 0) throw new Error('PDF preview rendering failed');
+            const buffer = fs.readFileSync(path.join(tempDir, renderedFiles[0]));
+            return { buffer, totalPages, pageIndex };
+        }
+
+        // Case 3: Archive (zip/cbz/cbr/rar/cbt/cb7/tar/7z)
+        let isRarArchive = false;
+        try {
+            const fd = fs.openSync(file.path, 'r');
+            const sig = Buffer.alloc(7);
+            fs.readSync(fd, sig, 0, 7, 0);
+            fs.closeSync(fd);
+            if (sig.toString('hex').startsWith('526172211a07')) isRarArchive = true;
+        } catch (e) {}
+        if (ext === '.cbr' || ext === '.rar') isRarArchive = true;
+
+        let archivePath = file.path;
+        if (ext && !archivePath.toLowerCase().endsWith(ext)) {
+            const newPath = archivePath + ext;
+            fs.renameSync(archivePath, newPath);
+            archivePath = newPath;
+            file.path = newPath;
+        }
+
+        // List images inside the archive
+        const images = await new Promise((resolve) => {
+            const listCmd = isRarArchive ? `rar lb "${archivePath}"` : `7z l -slt "${archivePath}"`;
+            exec(listCmd, (err, stdout) => {
+                if (err) { resolve([]); return; }
+                let list = [];
+                if (isRarArchive) {
+                    list = stdout.split(/\r?\n/).map(l => l.trim())
+                        .filter(l => l && /\.(jpg|jpeg|png|webp|gif|bmp|tiff|tif)$/i.test(l));
+                } else {
+                    const matches = [...stdout.matchAll(/Path = ([^\r\n]+\.(jpg|jpeg|png|webp|gif|bmp|tiff|tif))/gi)];
+                    list = matches.map(m => m[1].trim());
+                }
+                list.sort((a, b) => a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' }));
+                resolve(list);
+            });
+        });
+
+        if (images.length === 0) throw new Error('No images found in archive');
+
+        const totalPages = images.length;
+        const pageIndex = (requestedIndex !== null && requestedIndex >= 0 && requestedIndex < totalPages)
+            ? requestedIndex
+            : Math.floor(Math.random() * totalPages);
+        const targetImage = images[pageIndex];
+
+        const extractCmd = isRarArchive
+            ? `rar e -y "${archivePath}" "${targetImage}" "${tempDir}/"`
+            : `7z e "${archivePath}" -o"${tempDir}" "${targetImage}" -y`;
+        await new Promise((resolve, reject) => {
+            exec(extractCmd, (err) => { if (err) reject(err); else resolve(); });
+        });
+
+        const extractedFiles = fs.readdirSync(tempDir).filter(f => /\.(jpg|jpeg|png|webp|gif|bmp|tiff|tif)$/i.test(f));
+        if (extractedFiles.length === 0) throw new Error('Archive extraction failed');
+        const buffer = fs.readFileSync(path.join(tempDir, extractedFiles[0]));
+        return { buffer, totalPages, pageIndex };
+    } finally {
+        try { fs.rmSync(tempDir, { recursive: true, force: true }); } catch (e) {}
+    }
+}
+
+// Route: generate a before/after preview of the advanced retouching options on a single page,
+// picked randomly (or by explicit index) from the uploaded source. Render-mode only (requires Sharp).
+app.post('/preview', upload.single('file'), async (req, res) => {
+    if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
+    if (!sharp) return res.status(500).json({ error: 'Sharp module not available on server' });
+
+    const { pageIndex, rotation, cropMargins, deskew, autoContrast, brightness, saturation } = req.body;
+    const rotAngle = rotation ? parseInt(rotation, 10) : 0;
+    const requestedIndex = (pageIndex !== undefined && pageIndex !== null && pageIndex !== '')
+        ? parseInt(pageIndex, 10)
+        : null;
+
+    const retouchOpts = {
+        cropMargins: cropMargins || '',
+        deskew: (deskew === 'true' || deskew === true),
+        autoContrast: (autoContrast === 'true' || autoContrast === true),
+        brightness: brightness || '1',
+        saturation: saturation || '1'
+    };
+
+    // Largeur fixe de la prévisualisation (correspond à la taille du cadre dans l'UI)
+    const PREVIEW_WIDTH = 400;
+
+    try {
+        const { buffer, totalPages, pageIndex: usedIndex } = await extractPreviewPage(req.file, requestedIndex);
+
+        // BEFORE: image originale réduite à PREVIEW_WIDTH, SANS aucun traitement
+        const beforeBuffer = await sharp(buffer)
+            .resize({ width: PREVIEW_WIDTH, withoutEnlargement: false })
+            .jpeg({ quality: 88 })
+            .toBuffer();
+
+        // Dimensions de référence exactes du "before"
+        const beforeMeta = await sharp(beforeBuffer).metadata();
+        const refW = beforeMeta.width || PREVIEW_WIDTH;
+        const refH = beforeMeta.height || PREVIEW_WIDTH;
+
+        // AFTER: partir du buffer original, réduire puis appliquer TOUS les traitements
+        // Ordre : resize → rotation → deskew/crop (géométrie) → normalise/modulate (couleur)
+        // Important : on part du buffer original brut (pas d'un JPEG intermédiaire)
+        // pour que brightness/saturation/autoContrast soient pleinement visibles.
+        let afterPipeline = sharp(buffer)
+            .resize({ width: PREVIEW_WIDTH, withoutEnlargement: false });
+        if (rotAngle !== 0) afterPipeline = afterPipeline.rotate(rotAngle);
+        afterPipeline = await applyPreResizeAdjustments(afterPipeline, {
+            deskew: retouchOpts.deskew,
+            cropMargins: retouchOpts.cropMargins,
+            logPrefix: '[PREVIEW] '
+        });
+        afterPipeline = applyPostResizeAdjustments(afterPipeline, retouchOpts);
+        const afterRaw = await afterPipeline.jpeg({ quality: 88 }).toBuffer();
+        // Recaler aux dimensions exactes du "before" pour l'overlay pixel-perfect
+        const afterBuffer = await sharp(afterRaw)
+            .resize({ width: refW, height: refH, fit: 'contain', background: { r: 17, g: 17, b: 17 } })
+            .jpeg({ quality: 88 })
+            .toBuffer();
+
+        res.json({
+            pageIndex: usedIndex,
+            totalPages,
+            before: `data:image/jpeg;base64,${beforeBuffer.toString('base64')}`,
+            after: `data:image/jpeg;base64,${afterBuffer.toString('base64')}`
+        });
+    } catch (e) {
+        logWarn('[PREVIEW] Error:', e.message);
+        res.status(500).json({ error: e.message || 'Preview generation failed' });
+    } finally {
+        try { if (req.file && fs.existsSync(req.file.path)) fs.unlinkSync(req.file.path); } catch (e) {}
+    }
+});
+
 // Route d'analyse préalable (comptage des pages pour les archives)
 app.post('/analyze', upload.single('file'), (req, res) => {
     if (!req.file) return res.status(400).json({ pages: 0 });
@@ -231,11 +512,19 @@ app.post('/analyze', upload.single('file'), (req, res) => {
 
 // Route principale de conversion
 app.post('/convert', upload.array('files'), async (req, res) => {
-    const { dpi, maxWidth, colorMode, pageStart, pageEnd, format, compression, archiveCompression, imgFormat, requestId, rotation, splitDouble, readingDir } = req.body;
+    const { dpi, maxWidth, colorMode, pageStart, pageEnd, format, compression, archiveCompression, imgFormat, requestId, rotation, splitDouble, readingDir, cropMargins, deskew, autoContrast, brightness, saturation } = req.body;
     const isOriginal = dpi === 'original';
     const rotAngle = rotation ? parseInt(rotation) : 0;
     const maxW = maxWidth ? parseInt(maxWidth) : null;
-    logInfo(`[REQUEST PARAMS] dpi="${dpi}", maxWidth="${maxWidth}", maxW=${maxW}, isOriginal=${isOriginal}`);
+    // Advanced retouching options (opt-in, render-mode only - ignored when isOriginal)
+    const cropMarginsVal = (!isOriginal && cropMargins) ? cropMargins : '';
+    const deskewVal = (!isOriginal && (deskew === 'true' || deskew === true || deskew === '1'));
+    const autoContrastVal = (!isOriginal && (autoContrast === 'true' || autoContrast === true || autoContrast === '1'));
+    const brightnessVal = (!isOriginal && brightness) ? brightness : '1';
+    const saturationVal = (!isOriginal && saturation) ? saturation : '1';
+    const retouchOpts = { cropMargins: cropMarginsVal, deskew: deskewVal, autoContrast: autoContrastVal, brightness: brightnessVal, saturation: saturationVal };
+    const hasRetouch = !!(cropMarginsVal || deskewVal || autoContrastVal || (brightnessVal !== '1') || (saturationVal !== '1'));
+    logInfo(`[REQUEST PARAMS] dpi="${dpi}", maxWidth="${maxWidth}", maxW=${maxW}, isOriginal=${isOriginal}, retouch=${JSON.stringify(retouchOpts)}`);
     const files = req.files;
 
     if (!files || files.length === 0) {
@@ -315,12 +604,18 @@ app.post('/convert', upload.array('files'), async (req, res) => {
                 // Force JPEG for exotic formats (WEBP, BMP)
                 const forceJpeg = isExotic;
                 
-                const shouldUseSharp = sharp && (forceJpeg || rotAngle !== 0 || needsResizing || !isOriginal);
+                const shouldUseSharp = sharp && (forceJpeg || rotAngle !== 0 || needsResizing || !isOriginal || hasRetouch);
 
                 if (shouldUseSharp) {
                     let pipeline = sharp(file.path);
                     if (rotAngle !== 0) pipeline = pipeline.rotate(rotAngle);
-                    
+
+                    // Advanced retouching (pre-resize): Deskew then Crop margins
+                    // Must run BEFORE resize/maxWidth so width constraints apply to actual content
+                    if (!isOriginal && (retouchOpts.deskew || retouchOpts.cropMargins)) {
+                        pipeline = await applyPreResizeAdjustments(pipeline, { deskew: retouchOpts.deskew, cropMargins: retouchOpts.cropMargins, logPrefix: `[MERGE ${idx + 1}] ` });
+                    }
+
                     // Resize logic: DPI and MaxWidth are complementary (not exclusive)
                     // Step 1: Apply DPI-based resizing if requested
                     if (dpiVal) {
@@ -348,6 +643,11 @@ app.post('/convert', upload.array('files'), async (req, res) => {
                                 pipeline = pipeline.resize({ width: maxW });
                             }
                         } catch (e) {}
+                    }
+
+                    // Advanced retouching (post-resize): Auto-contrast then Brightness/Saturation
+                    if (!isOriginal && (retouchOpts.autoContrast || retouchOpts.brightness !== '1' || retouchOpts.saturation !== '1')) {
+                        pipeline = applyPostResizeAdjustments(pipeline, retouchOpts);
                     }
 
                     if (colorMode === 'gray') pipeline = pipeline.grayscale();
@@ -433,7 +733,16 @@ app.post('/convert', upload.array('files'), async (req, res) => {
                  await new Promise((resolve, reject) => exec(`rar a -r -m${rarComp} -ep1 "${tempOutputPath}" .`, { cwd: tempDir }, (err) => err ? reject(err) : resolve()));
             } else if (safeFormat === 'rar4') {
                  let rarComp = (archCompVal === 0 ? 0 : 3);
-                 await new Promise((resolve, reject) => exec(`rar a -ma4 -r -m${rarComp} -ep1 "${tempOutputPath}" .`, { cwd: tempDir }, (err) => err ? reject(err) : resolve()));
+                 // Try RAR4 format first (-ma4), fall back to RAR5 if not supported by installed rar version
+                 await new Promise((resolve, reject) => {
+                     exec(`rar a -ma4 -r -m${rarComp} -ep1 "${tempOutputPath}" .`, { cwd: tempDir }, (err, stdout, stderr) => {
+                         if (!err) { resolve(); return; }
+                         logWarn(`[RAR4] -ma4 failed (${stderr || err.message}), falling back to RAR5`);
+                         exec(`rar a -r -m${rarComp} -ep1 "${tempOutputPath}" .`, { cwd: tempDir }, (err2, stdout2, stderr2) => {
+                             if (err2) reject(new Error(stderr2 || err2.message)); else resolve();
+                         });
+                     });
+                 });
             } else {
                 // CBZ
                 const level = archCompVal;
@@ -641,14 +950,31 @@ app.post('/convert', upload.array('files'), async (req, res) => {
                     });
                 });
 
-                if (rotAngle !== 0 && sharp) {
+                // PDF render mode: rotation + advanced retouching (deskew/crop/contrast/brightness/saturation)
+                // Note: resize (maxWidth) is already applied natively by Poppler during rendering above,
+                // so there is no separate Sharp resize step here - crop/deskew can run alongside rotation.
+                if (sharp && (rotAngle !== 0 || (!isOriginal && hasRetouch))) {
                     const rawFiles = fs.readdirSync(tempDir).filter(f => !/^thumb_/i.test(f) && /\.(jpg|jpeg|png|tif|tiff|bmp)$/i.test(f));
-                    sendProgress(requestId, { type: 'log', message: `Applying rotation ${rotAngle}° to ${rawFiles.length} pages...` });
+                    if (rotAngle !== 0) {
+                        sendProgress(requestId, { type: 'log', message: `Applying rotation ${rotAngle}° to ${rawFiles.length} pages...` });
+                    }
+                    if (!isOriginal && hasRetouch) {
+                        sendProgress(requestId, { type: 'log', message: `Applying advanced retouching to ${rawFiles.length} pages...` });
+                    }
                     for (const f of rawFiles) {
                         const fPath = path.join(tempDir, f);
                         try {
                             const buffer = fs.readFileSync(fPath);
-                            if (buffer.length > 0) await sharp(buffer).rotate(rotAngle).toFile(fPath);
+                            if (buffer.length === 0) continue;
+                            let pipeline = sharp(buffer);
+                            if (rotAngle !== 0) pipeline = pipeline.rotate(rotAngle);
+                            if (!isOriginal && (retouchOpts.deskew || retouchOpts.cropMargins)) {
+                                pipeline = await applyPreResizeAdjustments(pipeline, { deskew: retouchOpts.deskew, cropMargins: retouchOpts.cropMargins, logPrefix: `[PDF ${f}] ` });
+                            }
+                            if (!isOriginal && (retouchOpts.autoContrast || retouchOpts.brightness !== '1' || retouchOpts.saturation !== '1')) {
+                                pipeline = applyPostResizeAdjustments(pipeline, retouchOpts);
+                            }
+                            await pipeline.toFile(fPath);
                         } catch(e) {}
                     }
                 }
@@ -832,12 +1158,9 @@ app.post('/convert', upload.array('files'), async (req, res) => {
                     if (isRarArchive) {
                         exec(`rar x -y "${file.path}" "${tempDir}/"`, (err) => {
                             if (err) {
-                                exec(`unrar x -y "${file.path}" "${tempDir}/"`, (err2) => {
-                                    if (err2) {
-                                        exec(`7z x "${file.path}" -o"${tempDir}"`, (err3) => {
-                                            if (err3) reject(err); else resolve();
-                                        });
-                                    } else resolve();
+                                // rar failed: fall back to 7z (supports RAR5/RAR4 extraction)
+                                exec(`7z x "${file.path}" -o"${tempDir}"`, (err2) => {
+                                    if (err2) reject(new Error(err2.message || err.message)); else resolve();
                                 });
                             } else resolve();
                         });
@@ -901,7 +1224,7 @@ app.post('/convert', upload.array('files'), async (req, res) => {
                     
                     const srcPathStr = srcPath.toString('binary');
                     const ext = path.extname(srcPathStr).toLowerCase();
-                    const needsProcessing = !isOriginal || (rotAngle !== 0);
+                    const needsProcessing = !isOriginal || (rotAngle !== 0) || hasRetouch;
 
                     if (!needsProcessing) {
                         fs.copyFileSync(srcPath, path.join(processingDir, `${num}${ext}`));
@@ -911,7 +1234,13 @@ app.post('/convert', upload.array('files'), async (req, res) => {
 
                         let pipeline = sharp(inputBuffer);
                         if (rotAngle !== 0) pipeline = pipeline.rotate(rotAngle);
-                        
+
+                        // Advanced retouching (pre-resize): Deskew then Crop margins
+                        // Must run BEFORE resize/maxWidth so width constraints apply to actual content
+                        if (!isOriginal && (retouchOpts.deskew || retouchOpts.cropMargins)) {
+                            pipeline = await applyPreResizeAdjustments(pipeline, { deskew: retouchOpts.deskew, cropMargins: retouchOpts.cropMargins, logPrefix: `[CONVERT ${processedCount}] ` });
+                        }
+
                         // Resize logic: DPI and MaxWidth are complementary (not exclusive)
                         // Step 1: Apply DPI-based resizing if requested
                         if (dpiVal) {
@@ -937,6 +1266,11 @@ app.post('/convert', upload.array('files'), async (req, res) => {
                                     pipeline = pipeline.resize({ width: maxW });
                                 }
                             } catch (e) {}
+                        }
+
+                        // Advanced retouching (post-resize): Auto-contrast then Brightness/Saturation
+                        if (!isOriginal && (retouchOpts.autoContrast || retouchOpts.brightness !== '1' || retouchOpts.saturation !== '1')) {
+                            pipeline = applyPostResizeAdjustments(pipeline, retouchOpts);
                         }
 
                         if (colorMode === 'gray') pipeline = pipeline.grayscale();
@@ -1067,7 +1401,16 @@ app.post('/convert', upload.array('files'), async (req, res) => {
                 else if (archCompVal === 5) rarComp = 3;
                 else if (archCompVal === 7) rarComp = 4;
                 else if (archCompVal === 9) rarComp = 5;
-                await new Promise((resolve, reject) => exec(`rar a -ma4 -r -m${rarComp} -ep1 "${tempOutputPath}" .`, { cwd: tempDir }, (err) => err ? reject(err) : resolve()));
+                // Try RAR4 format first (-ma4), fall back to RAR5 if not supported by installed rar version
+                await new Promise((resolve, reject) => {
+                    exec(`rar a -ma4 -r -m${rarComp} -ep1 "${tempOutputPath}" .`, { cwd: tempDir }, (err, stdout, stderr) => {
+                        if (!err) { resolve(); return; }
+                        logWarn(`[RAR4] -ma4 failed (${stderr || err.message}), falling back to RAR5`);
+                        exec(`rar a -r -m${rarComp} -ep1 "${tempOutputPath}" .`, { cwd: tempDir }, (err2, stdout2, stderr2) => {
+                            if (err2) reject(new Error(stderr2 || err2.message)); else resolve();
+                        });
+                    });
+                });
             } else {
                 const level = archCompVal;
                 await new Promise((resolve, reject) => exec(`7z a -tzip -mx=${level} "${tempOutputPath}" .`, { cwd: tempDir }, (err) => err ? reject(err) : resolve()));

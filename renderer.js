@@ -89,7 +89,12 @@ function applyTranslations(dict) {
     '.compression-box': 'tooltips.quality',
     'splitDouble': 'tooltips.split',
     'readingDir': 'tooltips.reading',
-    'drop-zone': 'dropzone.tooltip'
+    'drop-zone': 'dropzone.tooltip',
+    'crop-margins': 'tooltips.crop',
+    'deskew': 'tooltips.deskew',
+    'auto-contrast': 'tooltips.auto_contrast',
+    'brightness': 'tooltips.brightness',
+    'saturation': 'tooltips.saturation'
   };
 
   Object.keys(tooltipMap).forEach(selector => {
@@ -156,12 +161,11 @@ document.body.appendChild(folderInput);
 let selectedFiles = [];
 let fileCounter = 0;
 let totalFiles = 0;
-let imageCounter = 0;
 let totalImages = 0;
-let globalTotalImages = 0; // Backup for Original mode cumulative view
 let filesPageCounts = [];
 let conversionStartTime = 0;
 let cumulativeCompletedPages = 0; // Persistent counter for completed pages (left counter)
+let _completedTaskKeys = new Set(); // Tracks already-counted tasks within one conversion session
 
 // Compression slider
 sliderCompression.addEventListener('input', (e) => {
@@ -213,7 +217,79 @@ function updateOriginalMode() {
     compressionSlider.style.cursor = 'pointer';
   }
   updateCompressionUI();
+  updateAdvancedPanelState();
 }
+
+// --- Advanced Retouching Panel (crop, deskew, contrast, brightness, saturation, split, reading dir) ---
+const advancedPanel = document.getElementById('advanced-retouch');
+const advancedBadge = document.getElementById('advanced-active-badge');
+const advancedOriginalHint = document.getElementById('advanced-original-hint');
+const cropMarginsSelect = document.getElementById('crop-margins');
+const deskewCheckbox = document.getElementById('deskew');
+const autoContrastCheckbox = document.getElementById('auto-contrast');
+const brightnessSelect = document.getElementById('brightness');
+const saturationSelect = document.getElementById('saturation');
+
+function updateAdvancedPanelState() {
+  const isOriginal = dpiSelect.value === 'original';
+  if (advancedPanel) {
+    advancedPanel.style.opacity = isOriginal ? '0.5' : '1';
+    advancedPanel.style.pointerEvents = isOriginal ? 'none' : 'auto';
+    if (isOriginal) advancedPanel.removeAttribute('open');
+  }
+  if (advancedOriginalHint) {
+    advancedOriginalHint.style.display = isOriginal ? 'block' : 'none';
+  }
+  updateAdvancedBadge();
+}
+
+function updateAdvancedBadge() {
+  if (!advancedBadge) return;
+  let count = 0;
+  const splitEl = document.getElementById('splitDouble');
+  if (splitEl && splitEl.value === 'auto') count++;
+  if (cropMarginsSelect && cropMarginsSelect.value) count++;
+  if (deskewCheckbox && deskewCheckbox.checked) count++;
+  if (autoContrastCheckbox && autoContrastCheckbox.checked) count++;
+  if (brightnessSelect && parseInt(brightnessSelect.value, 10) !== 0) count++;
+  if (saturationSelect && parseInt(saturationSelect.value, 10) !== 0) count++;
+
+  if (count > 0) {
+    advancedBadge.textContent = count;
+    advancedBadge.style.display = 'inline-block';
+  } else {
+    advancedBadge.style.display = 'none';
+  }
+}
+
+// Bidirectional sliders (-30% to +30%, 0 = normal) live label update
+const brightnessValLabel = document.getElementById('brightness-val');
+const saturationValLabel = document.getElementById('saturation-val');
+function formatSliderPct(val) {
+  const n = parseInt(val, 10) || 0;
+  return (n > 0 ? '+' : '') + n + '%';
+}
+if (brightnessSelect && brightnessValLabel) {
+  brightnessSelect.addEventListener('input', () => {
+    brightnessValLabel.textContent = formatSliderPct(brightnessSelect.value);
+  });
+}
+if (saturationSelect && saturationValLabel) {
+  saturationSelect.addEventListener('input', () => {
+    saturationValLabel.textContent = formatSliderPct(saturationSelect.value);
+  });
+}
+
+// Convert a -30..30 slider value into a Sharp modulate factor (0 -> 1, +15 -> 1.15, -15 -> 0.85)
+function sliderToFactor(val) {
+  const n = parseInt(val, 10) || 0;
+  return (1 + n / 100).toFixed(2);
+}
+
+[cropMarginsSelect, deskewCheckbox, autoContrastCheckbox, brightnessSelect, saturationSelect].forEach(el => {
+  if (el) el.addEventListener('input', updateAdvancedBadge);
+  if (el) el.addEventListener('change', updateAdvancedBadge);
+});
 
 function updateCompressionUI() {
     const isOriginal = dpiSelect.value === 'original';
@@ -263,9 +339,12 @@ function updateSplitOptions() {
     if (readingSelect) readingSelect.disabled = isOriginal;
     if (splitSelect) splitSelect.style.opacity = isOriginal ? '0.5' : '1';
     if (readingSelect) readingSelect.style.opacity = isOriginal ? '0.5' : '1';
+    updateAdvancedBadge();
 }
 dpiSelect.addEventListener('change', updateSplitOptions);
+if (splitSelect) splitSelect.addEventListener('change', updateAdvancedBadge);
 updateSplitOptions();
+updateAdvancedPanelState();
 
 // Technical logs removed
 
@@ -463,7 +542,7 @@ async function handleFiles(fileList) {
       filesPageCounts.push(0);
     }
   }
-  globalTotalImages = totalImages; // Save global total
+  // totalImages is the single source of truth — no secondary copy needed
 
   // Upload zone information (highlighted)
   let pagesHtml = '';
@@ -487,7 +566,6 @@ async function handleFiles(fileList) {
   applyTranslations(currentTranslations);
 
   fileCounter = 0;
-  imageCounter = 0;
   if (countersContainer) countersContainer.style.display = 'flex';
   if (pageCounterEl) pageCounterEl.innerText = `Page : 0 / ${totalImages}`;
   if (fileCounterEl) {
@@ -496,6 +574,7 @@ async function handleFiles(fileList) {
   }
 
   btnConvert.disabled = false;
+  updatePreviewButtonState();
 }
 
 // --- UPSCALE WARNING HELPERS ---
@@ -577,8 +656,8 @@ btnConvert.addEventListener('click', async () => {
   
   conversionStartTime = Date.now();
   fileCounter = 0;
-  imageCounter = 0;
   cumulativeCompletedPages = 0; // Reset cumulative counter
+  _completedTaskKeys.clear();   // Reset de-duplication set for this session
   progressThumb.style.display = 'none';
 
   const requestId = generateUUID();
@@ -589,13 +668,12 @@ btnConvert.addEventListener('click', async () => {
 
     if (data.type === 'thumbnail-init') {
       fileCounter += 1;
-      imageCounter = 0;
 
       if (fileCounterEl) {
         const tpl = currentTranslations['progress.file'] || "File # {current} / {total}";
         fileCounterEl.innerText = tpl.replace('{current}', fileCounter).replace('{total}', totalFiles);
       }
-      if (pageCounterEl) pageCounterEl.innerText = `Page : ${imageCounter} / ${totalImages}`;
+      if (pageCounterEl) pageCounterEl.innerText = `Page : ${cumulativeCompletedPages} / ${totalImages}`;
 
       const isOriginal = document.getElementById('dpi')?.value === 'original';
       const initialWidth = isOriginal ? '100%' : '0%';
@@ -611,25 +689,19 @@ btnConvert.addEventListener('click', async () => {
     }
 
     if (data.type === 'progress') {
-      // --- UNIFIED CUMULATIVE PROGRESS (both Original and Normal modes) ---
-      // Always use global total to avoid resetting counter between files
-      totalImages = globalTotalImages;
-
       const isOriginal = document.getElementById('dpi')?.value === 'original';
       
-      // Left counter (page-counter): Show only completed files (cumulative final count)
-      // Uses persistent cumulative counter to avoid resets
+      // Left counter: cumulative pages from completed tasks only
+      // A task is "completed" when currentPct===100 OR status contains "assembl"
       const isFileCompleted = (data.currentPct === 100) ||
                                (data.status && data.status.toLowerCase().includes('assembl'));
       
       if (isFileCompleted && data.totalPages !== undefined && data.totalPages > 0) {
-        // File/task completed: increment cumulative counter with actual page count
-        const storageKey = `completed_task_${data.currentFileIndex}`;
-        
-        // Only increment if we haven't already counted this task
-        if (!window[storageKey]) {
+        // De-duplicate: only count each task index once per conversion session
+        const taskKey = `task_${data.currentFileIndex}`;
+        if (!_completedTaskKeys.has(taskKey)) {
           cumulativeCompletedPages += data.totalPages;
-          window[storageKey] = true; // Mark as counted
+          _completedTaskKeys.add(taskKey);
         }
       }
       
@@ -729,6 +801,13 @@ btnConvert.addEventListener('click', async () => {
   const readingVal = document.getElementById('readingDir') ? document.getElementById('readingDir').value : 'ltr';
   formData.append('splitDouble', splitVal);
   formData.append('readingDir', readingVal);
+  // Advanced retouching parameters (crop margins, deskew, auto-contrast, brightness, saturation)
+  formData.append('cropMargins', cropMarginsSelect ? cropMarginsSelect.value : '');
+  formData.append('deskew', (deskewCheckbox && deskewCheckbox.checked) ? 'true' : 'false');
+  formData.append('autoContrast', (autoContrastCheckbox && autoContrastCheckbox.checked) ? 'true' : 'false');
+  // Sliders are -30..30 (0=normal); convert to Sharp modulate factor (e.g. +15 -> 1.15, -15 -> 0.85)
+  formData.append('brightness', brightnessSelect ? sliderToFactor(brightnessSelect.value) : '1');
+  formData.append('saturation', saturationSelect ? sliderToFactor(saturationSelect.value) : '1');
 
   try {
     const response = await fetch('/convert', { method: 'POST', body: formData });
@@ -818,9 +897,22 @@ function resetControls() {
     document.getElementById('rotation').value = '0';
     compressionSlider.value = 80;
     lblCompression.innerText = '80%';
-    
+
+    // Reset advanced retouching panel to defaults (disabled by default)
+    if (splitSelect) splitSelect.value = 'auto';
+    if (readingSelect) readingSelect.value = 'ltr';
+    if (cropMarginsSelect) cropMarginsSelect.value = '';
+    if (deskewCheckbox) deskewCheckbox.checked = false;
+    if (autoContrastCheckbox) autoContrastCheckbox.checked = false;
+    if (brightnessSelect) brightnessSelect.value = '0';
+    if (saturationSelect) saturationSelect.value = '0';
+    if (brightnessValLabel) brightnessValLabel.textContent = '0%';
+    if (saturationValLabel) saturationValLabel.textContent = '0%';
+    if (advancedPanel) advancedPanel.removeAttribute('open');
+
     // Trigger change events to update UI state (grayed out elements etc)
     updateOriginalMode();
+    updateSplitOptions();
 }
 
 // Reset UI to initial state (files and progress only)
@@ -829,10 +921,9 @@ function resetUI() {
   filesPageCounts = [];
   fileCounter = 0;
   totalFiles = 0;
-  imageCounter = 0;
   totalImages = 0;
-  globalTotalImages = 0;
-  cumulativeCompletedPages = 0; // Reset cumulative counter
+  cumulativeCompletedPages = 0;
+  _completedTaskKeys.clear();
 
   dropZone.innerHTML = `
     <div style="color: #666; font-size: 0.85em; margin-bottom: 12px; font-weight: 500;">
@@ -863,6 +954,7 @@ function resetUI() {
   progressThumb.style.display = 'none';
 
   btnConvert.disabled = true;
+  updatePreviewButtonState();
 
   const phaseLabel = document.getElementById('phase-label');
   if (phaseLabel) phaseLabel.innerText = '';
@@ -880,3 +972,205 @@ function generateUUID() {
     return v.toString(16);
   });
 }
+
+// --- PREVIEW — Canvas-based before/after comparison ---
+const btnPreview = document.getElementById('btn-preview');
+const previewModal = document.getElementById('preview-modal');
+const previewLoading = document.getElementById('preview-loading');
+const previewCompare = document.getElementById('preview-compare');
+const previewError = document.getElementById('preview-error');
+const previewPageInfo = document.getElementById('preview-page-info');
+const btnPreviewShuffle = document.getElementById('btn-preview-shuffle');
+const btnPreviewClose = document.getElementById('btn-preview-close');
+
+let previewCurrentFile = null;
+let previewCurrentPageIndex = null;
+let _previewImgBefore = null;  // HTMLImageElement, loaded
+let _previewImgAfter = null;   // HTMLImageElement, loaded
+let _previewDividerPct = 50;   // 0–100
+
+function updatePreviewButtonState() {
+  if (!btnPreview) return;
+  const isOriginal = dpiSelect.value === 'original';
+  btnPreview.disabled = isOriginal || selectedFiles.length === 0;
+}
+
+// Draw both images on the canvas at identical size, split at dividerPct%
+function drawPreviewCanvas(pct) {
+  const canvas = document.getElementById('preview-canvas');
+  if (!canvas || !_previewImgBefore || !_previewImgAfter) return;
+  pct = Math.max(0, Math.min(100, pct));
+  _previewDividerPct = pct;
+
+  // Utiliser les dimensions naturelles de l'image "before" comme référence
+  // (évite le problème de getBoundingClientRect() = 0 quand le canvas n'est pas encore rendu)
+  const dpr = window.devicePixelRatio || 1;
+  const imgNatW = _previewImgBefore.naturalWidth || 400;
+  const imgNatH = _previewImgBefore.naturalHeight || 400;
+  // Limiter la largeur CSS à 400px max
+  const cssW = Math.min(imgNatW, 400);
+  const aspect = imgNatH / imgNatW;
+  const cssH = Math.round(cssW * aspect);
+
+  canvas.style.width  = cssW + 'px';
+  canvas.style.height = cssH + 'px';
+  canvas.width  = Math.round(cssW * dpr);
+  canvas.height = Math.round(cssH * dpr);
+
+  const ctx = canvas.getContext('2d');
+  ctx.scale(dpr, dpr);
+
+  const W = cssW, H = cssH;
+  const splitX = Math.round(W * pct / 100);
+
+  // Draw "after" on the left part (traitement appliqué)
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(0, 0, splitX, H);
+  ctx.clip();
+  ctx.drawImage(_previewImgAfter, 0, 0, W, H);
+  ctx.restore();
+
+  // Draw "before" on the right part (original sans traitement)
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(splitX, 0, W - splitX, H);
+  ctx.clip();
+  ctx.drawImage(_previewImgBefore, 0, 0, W, H);
+  ctx.restore();
+
+  // Draw the divider line
+  ctx.beginPath();
+  ctx.moveTo(splitX, 0);
+  ctx.lineTo(splitX, H);
+  ctx.lineWidth = 2;
+  ctx.strokeStyle = '#FF9800';
+  ctx.stroke();
+
+  // Draw the handle icon centred on the line
+  const hx = splitX, hy = H / 2;
+  ctx.fillStyle = '#FF9800';
+  ctx.beginPath();
+  ctx.roundRect(hx - 16, hy - 10, 32, 20, 10);
+  ctx.fill();
+  ctx.fillStyle = '#1e1e1e';
+  ctx.font = 'bold 11px sans-serif';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText('◄►', hx, hy);
+}
+
+// Mouse / touch drag on the canvas
+(function initPreviewDrag() {
+  const canvas = document.getElementById('preview-canvas');
+  if (!canvas) return;
+  let dragging = false;
+
+  function getPct(clientX) {
+    const rect = canvas.getBoundingClientRect();
+    return ((clientX - rect.left) / rect.width) * 100;
+  }
+
+  canvas.addEventListener('mousedown', (e) => {
+    dragging = true;
+    drawPreviewCanvas(getPct(e.clientX));
+    e.preventDefault();
+  });
+  document.addEventListener('mousemove', (e) => {
+    if (!dragging) return;
+    drawPreviewCanvas(getPct(e.clientX));
+  });
+  document.addEventListener('mouseup', () => { dragging = false; });
+
+  canvas.addEventListener('touchstart', (e) => {
+    dragging = true;
+    drawPreviewCanvas(getPct(e.touches[0].clientX));
+    e.preventDefault();
+  }, { passive: false });
+  document.addEventListener('touchmove', (e) => {
+    if (!dragging) return;
+    drawPreviewCanvas(getPct(e.touches[0].clientX));
+    e.preventDefault();
+  }, { passive: false });
+  document.addEventListener('touchend', () => { dragging = false; });
+})();
+
+// Load an image from a data URL, return a Promise<HTMLImageElement>
+function loadImg(src) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => resolve(img);
+    img.onerror = reject;
+    img.src = src;
+  });
+}
+
+async function runPreview(requestedPageIndex) {
+  if (!previewCurrentFile) return;
+
+  previewLoading.style.display = 'block';
+  previewCompare.style.display = 'none';
+  previewError.style.display = 'none';
+  previewPageInfo.textContent = '';
+
+  const fd = new FormData();
+  fd.append('file', previewCurrentFile);
+  if (requestedPageIndex !== null && requestedPageIndex !== undefined) {
+    fd.append('pageIndex', requestedPageIndex);
+  }
+  fd.append('rotation', document.getElementById('rotation').value);
+  fd.append('cropMargins', cropMarginsSelect ? cropMarginsSelect.value : '');
+  fd.append('deskew', (deskewCheckbox && deskewCheckbox.checked) ? 'true' : 'false');
+  fd.append('autoContrast', (autoContrastCheckbox && autoContrastCheckbox.checked) ? 'true' : 'false');
+  fd.append('brightness', brightnessSelect ? sliderToFactor(brightnessSelect.value) : '1');
+  fd.append('saturation', saturationSelect ? sliderToFactor(saturationSelect.value) : '1');
+
+  try {
+    const res = await fetch('/preview', { method: 'POST', body: fd });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Preview generation failed');
+
+    previewCurrentPageIndex = data.pageIndex;
+    // Load both images into memory (guaranteed same pixel dimensions by server)
+    [_previewImgBefore, _previewImgAfter] = await Promise.all([
+      loadImg(data.before),
+      loadImg(data.after)
+    ]);
+    previewPageInfo.textContent = `Page ${data.pageIndex + 1} / ${data.totalPages}`;
+    previewLoading.style.display = 'none';
+    previewCompare.style.display = 'block';
+    drawPreviewCanvas(50);
+  } catch (e) {
+    console.error('Preview error:', e);
+    previewLoading.style.display = 'none';
+    previewError.style.display = 'block';
+    previewError.textContent = (currentTranslations['controls.preview.error'] || 'Preview error: {error}').replace('{error}', e.message);
+  }
+}
+
+if (btnPreview) {
+  btnPreview.addEventListener('click', () => {
+    if (!selectedFiles.length) return;
+    // Use the first selected file as preview source
+    previewCurrentFile = selectedFiles[0];
+    previewCurrentPageIndex = null;
+    previewModal.style.display = 'flex';
+    runPreview(null);
+  });
+}
+
+if (btnPreviewShuffle) {
+  btnPreviewShuffle.addEventListener('click', () => {
+    runPreview(null); // null = pick a new random page
+  });
+}
+
+if (btnPreviewClose) {
+  btnPreviewClose.addEventListener('click', () => {
+    previewModal.style.display = 'none';
+  });
+}
+
+// Refresh preview button availability whenever files or mode change
+dpiSelect.addEventListener('change', updatePreviewButtonState);
+updatePreviewButtonState();
