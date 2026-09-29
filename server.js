@@ -7,6 +7,37 @@ const PDFDocument = require('pdfkit');
 let sharp;
 try { sharp = require('sharp'); } catch(e) { console.warn('Sharp module not found.'); }
 
+// Helper: sanitize a potentially corrupt JPEG buffer using jpegtran (much more tolerant than Sharp/libvips)
+// jpegtran re-encodes the JPEG losslessly, stripping extraneous bytes that cause Sharp to crash.
+// Falls back to the original buffer if jpegtran is not available or fails.
+const os = require('os');
+function sanitizeJpegBuffer(inputBuffer, ext) {
+    return new Promise((resolve) => {
+        if (!['.jpg', '.jpeg'].includes(ext.toLowerCase())) {
+            return resolve(inputBuffer); // Only sanitize JPEG
+        }
+        const tmpIn  = path.join(os.tmpdir(), `jptmp_in_${Date.now()}_${Math.random().toString(36).slice(2)}.jpg`);
+        const tmpOut = path.join(os.tmpdir(), `jptmp_out_${Date.now()}_${Math.random().toString(36).slice(2)}.jpg`);
+        try {
+            fs.writeFileSync(tmpIn, inputBuffer);
+        } catch(e) { return resolve(inputBuffer); }
+        exec(`jpegtran -copy all -optimize "${tmpIn}" "${tmpOut}"`, (err) => {
+            try { fs.unlinkSync(tmpIn); } catch(e) {}
+            if (err) {
+                try { fs.unlinkSync(tmpOut); } catch(e) {}
+                return resolve(inputBuffer); // jpegtran failed or not installed → use raw
+            }
+            try {
+                const cleaned = fs.readFileSync(tmpOut);
+                fs.unlinkSync(tmpOut);
+                resolve(cleaned.length > 0 ? cleaned : inputBuffer);
+            } catch(e) {
+                resolve(inputBuffer);
+            }
+        });
+    });
+}
+
 const app = express();
 const port = process.env.PORT || 3111;
 
@@ -424,13 +455,13 @@ app.post('/preview', upload.single('file'), async (req, res) => {
         const { buffer, totalPages, pageIndex: usedIndex } = await extractPreviewPage(req.file, requestedIndex);
 
         // BEFORE: image originale réduite à PREVIEW_WIDTH, SANS aucun traitement
-        const beforeBuffer = await sharp(buffer)
+        const beforeBuffer = await sharp(buffer, { failOn: 'none' })
             .resize({ width: PREVIEW_WIDTH, withoutEnlargement: false })
             .jpeg({ quality: 88 })
             .toBuffer();
 
         // Dimensions de référence exactes du "before"
-        const beforeMeta = await sharp(beforeBuffer).metadata();
+        const beforeMeta = await sharp(beforeBuffer, { failOn: 'none' }).metadata();
         const refW = beforeMeta.width || PREVIEW_WIDTH;
         const refH = beforeMeta.height || PREVIEW_WIDTH;
 
@@ -438,7 +469,7 @@ app.post('/preview', upload.single('file'), async (req, res) => {
         // Ordre : resize → rotation → deskew/crop (géométrie) → normalise/modulate (couleur)
         // Important : on part du buffer original brut (pas d'un JPEG intermédiaire)
         // pour que brightness/saturation/autoContrast soient pleinement visibles.
-        let afterPipeline = sharp(buffer)
+        let afterPipeline = sharp(buffer, { failOn: 'none' })
             .resize({ width: PREVIEW_WIDTH, withoutEnlargement: false });
         if (rotAngle !== 0) afterPipeline = afterPipeline.rotate(rotAngle);
         afterPipeline = await applyPreResizeAdjustments(afterPipeline, {
@@ -449,7 +480,7 @@ app.post('/preview', upload.single('file'), async (req, res) => {
         afterPipeline = applyPostResizeAdjustments(afterPipeline, retouchOpts);
         const afterRaw = await afterPipeline.jpeg({ quality: 88 }).toBuffer();
         // Recaler aux dimensions exactes du "before" pour l'overlay pixel-perfect
-        const afterBuffer = await sharp(afterRaw)
+        const afterBuffer = await sharp(afterRaw, { failOn: 'none' })
             .resize({ width: refW, height: refH, fit: 'contain', background: { r: 17, g: 17, b: 17 } })
             .jpeg({ quality: 88 })
             .toBuffer();
@@ -567,13 +598,20 @@ app.post('/convert', upload.array('files'), async (req, res) => {
             fs.mkdirSync(tempDir, { recursive: true });
 
             const safeImgFormat = (imgFormat || 'jpeg').toLowerCase();
+
+            // Apply page range filter (pageStart / pageEnd are 1-based, inclusive)
+            const totalMergeFiles = taskFiles.length;
+            const mergeStart = pageStart ? Math.max(1, parseInt(pageStart)) : 1;
+            const mergeEnd   = pageEnd   ? Math.min(totalMergeFiles, parseInt(pageEnd)) : totalMergeFiles;
+            taskFiles = taskFiles.slice(mergeStart - 1, mergeEnd); // 0-based slice
+
             const padding = taskFiles.length.toString().length;
 
             // Thumbnail Init (Merge Mode)
             if (FEATURE_PROGRESS_THUMBNAIL && sharp && taskFiles.length > 0) {
                 try {
                     sendProgress(requestId, { type: 'log', message: `Generating preview for ${baseName}...` });
-                    const buffer = await sharp(taskFiles[0].path).resize(200).toBuffer();
+                    const buffer = await sharp(taskFiles[0].path, { failOn: 'none' }).resize(200).toBuffer();
                     sendProgress(requestId, { type: 'thumbnail-init', color: `data:image/jpeg;base64,${buffer.toString('base64')}` });
                 } catch(e) { logWarn("Merge Thumbnail error:", e); }
             }
@@ -607,7 +645,7 @@ app.post('/convert', upload.array('files'), async (req, res) => {
                 const shouldUseSharp = sharp && (forceJpeg || rotAngle !== 0 || needsResizing || !isOriginal || hasRetouch);
 
                 if (shouldUseSharp) {
-                    let pipeline = sharp(file.path);
+                    let pipeline = sharp(file.path, { failOn: 'none' });
                     if (rotAngle !== 0) pipeline = pipeline.rotate(rotAngle);
 
                     // Advanced retouching (pre-resize): Deskew then Crop margins
@@ -777,7 +815,7 @@ app.post('/convert', upload.array('files'), async (req, res) => {
                 try {
                     const images = fs.readdirSync(tempDir).filter(f => /\.(jpg|jpeg|png|webp|tiff|tif|bmp)$/i.test(f)).sort();
                     if (images.length > 0) {
-                        const buffer = await sharp(path.join(tempDir, images[0])).resize(200).toBuffer();
+                        const buffer = await sharp(path.join(tempDir, images[0]), { failOn: 'none' }).resize(200).toBuffer();
                         thumbnail = `data:image/jpeg;base64,${buffer.toString('base64')}`;
                     }
                 } catch(e) { logWarn("Final Thumbnail generation error:", e); }
@@ -964,9 +1002,11 @@ app.post('/convert', upload.array('files'), async (req, res) => {
                     for (const f of rawFiles) {
                         const fPath = path.join(tempDir, f);
                         try {
-                            const buffer = fs.readFileSync(fPath);
-                            if (buffer.length === 0) continue;
-                            let pipeline = sharp(buffer);
+                            const rawBuffer = fs.readFileSync(fPath);
+                            if (rawBuffer.length === 0) continue;
+                            const fExt = path.extname(f);
+                            const cleanBuffer = await sanitizeJpegBuffer(rawBuffer, fExt);
+                            let pipeline = sharp(cleanBuffer, { failOn: 'none' });
                             if (rotAngle !== 0) pipeline = pipeline.rotate(rotAngle);
                             if (!isOriginal && (retouchOpts.deskew || retouchOpts.cropMargins)) {
                                 pipeline = await applyPreResizeAdjustments(pipeline, { deskew: retouchOpts.deskew, cropMargins: retouchOpts.cropMargins, logPrefix: `[PDF ${f}] ` });
@@ -996,12 +1036,12 @@ app.post('/convert', upload.array('files'), async (req, res) => {
                         const f = imgFiles[i];
                         const fullPath = path.join(tempDir, f);
                         try {
-                            const meta = await sharp(fullPath).metadata();
+                            const meta = await sharp(fullPath, { failOn: 'none' }).metadata();
                             if (meta && meta.width && meta.height && (meta.width / meta.height) > 1.2) {
                                 // Split vertically into two halves
                                 const halfW = Math.floor(meta.width / 2);
-                                const leftBuf = await sharp(fullPath).extract({ left: 0, top: 0, width: halfW, height: meta.height }).toBuffer();
-                                const rightBuf = await sharp(fullPath).extract({ left: meta.width - halfW, top: 0, width: halfW, height: meta.height }).toBuffer();
+                                const leftBuf = await sharp(fullPath, { failOn: 'none' }).extract({ left: 0, top: 0, width: halfW, height: meta.height }).toBuffer();
+                                const rightBuf = await sharp(fullPath, { failOn: 'none' }).extract({ left: meta.width - halfW, top: 0, width: halfW, height: meta.height }).toBuffer();
                                 // Use jpg for output halves
                                 const outExt = '.jpg';
                                 const leftName = `split_${i+1}_a${outExt}`;
@@ -1128,7 +1168,7 @@ app.post('/convert', upload.array('files'), async (req, res) => {
                                             const files = fs.readdirSync(thumbTempDir);
                                             const imgFile = files.find(f => /\.(jpg|jpeg|png|webp|gif|bmp)$/i.test(f));
                                             if (imgFile) {
-                                                const b = await sharp(path.join(thumbTempDir, imgFile)).resize(200).toBuffer();
+                                                const b = await sharp(path.join(thumbTempDir, imgFile), { failOn: 'none' }).resize(200).toBuffer();
                                                 const b64 = b.toString('base64');
                                                 sendProgress(requestId, { type: 'thumbnail-init', color: `data:image/jpeg;base64,${b64}` });
                                                 logDebug(`✓ Archive thumbnail generated successfully (${isRarArchive ? 'RAR' : '7z'})`);
@@ -1193,7 +1233,13 @@ app.post('/convert', upload.array('files'), async (req, res) => {
                 };
 
                 let extractedImages = getAllImages(Buffer.from(tempDir));
-                extractedImages.sort((a, b) => a.compare(b));
+                // Natural numeric sort: convert to string for comparison so that
+                // "page2.jpg" < "page10.jpg" (instead of lexicographic "page10" < "page2")
+                extractedImages.sort((a, b) => {
+                    const sa = a.toString('binary');
+                    const sb = b.toString('binary');
+                    return sa.localeCompare(sb, undefined, { numeric: true, sensitivity: 'base' });
+                });
                 
                 const totalExtracted = extractedImages.length;
                 const pStart = pageStart ? parseInt(pageStart) : 1;
@@ -1229,63 +1275,69 @@ app.post('/convert', upload.array('files'), async (req, res) => {
                     if (!needsProcessing) {
                         fs.copyFileSync(srcPath, path.join(processingDir, `${num}${ext}`));
                     } else if (sharp) {
-                        const inputBuffer = fs.readFileSync(srcPath);
-                        if (inputBuffer.length === 0) continue;
+                        const rawBuffer = fs.readFileSync(srcPath);
+                        if (rawBuffer.length === 0) continue;
 
-                        let pipeline = sharp(inputBuffer);
-                        if (rotAngle !== 0) pipeline = pipeline.rotate(rotAngle);
+                        // Sanitize corrupt JPEG using jpegtran before passing to Sharp
+                        const inputBuffer = await sanitizeJpegBuffer(rawBuffer, ext);
 
-                        // Advanced retouching (pre-resize): Deskew then Crop margins
-                        // Must run BEFORE resize/maxWidth so width constraints apply to actual content
-                        if (!isOriginal && (retouchOpts.deskew || retouchOpts.cropMargins)) {
-                            pipeline = await applyPreResizeAdjustments(pipeline, { deskew: retouchOpts.deskew, cropMargins: retouchOpts.cropMargins, logPrefix: `[CONVERT ${processedCount}] ` });
+                        try {
+                            let pipeline = sharp(inputBuffer, { failOn: 'none' });
+                            if (rotAngle !== 0) pipeline = pipeline.rotate(rotAngle);
+
+                            // Advanced retouching (pre-resize): Deskew then Crop margins
+                            if (!isOriginal && (retouchOpts.deskew || retouchOpts.cropMargins)) {
+                                pipeline = await applyPreResizeAdjustments(pipeline, { deskew: retouchOpts.deskew, cropMargins: retouchOpts.cropMargins, logPrefix: `[CONVERT ${processedCount}] ` });
+                            }
+
+                            // Resize logic: DPI and MaxWidth are complementary (not exclusive)
+                            if (dpiVal) {
+                                try {
+                                    const metadata = await pipeline.metadata();
+                                    const sourceDensity = metadata.density || 72;
+                                    const targetDensity = dpiVal;
+                                    if (Math.abs(targetDensity - sourceDensity) / sourceDensity > 0.02) {
+                                        const newWidth = Math.round(metadata.width * (targetDensity / sourceDensity));
+                                        pipeline = pipeline.resize(newWidth);
+                                    }
+                                    pipeline = pipeline.withMetadata({ density: targetDensity });
+                                } catch (e) {}
+                            }
+
+                            if (maxW && maxW > 0) {
+                                try {
+                                    const metadata = await pipeline.metadata();
+                                    const willResize = metadata.width !== maxW;
+                                    logDebug(`[CONVERT RESIZE] Image ${processedCount}: Source width=${metadata.width}px, MaxWidth=${maxW}px, Will resize: ${willResize}`);
+                                    if (willResize) {
+                                        pipeline = pipeline.resize({ width: maxW });
+                                    }
+                                } catch (e) {}
+                            }
+
+                            // Advanced retouching (post-resize): Auto-contrast then Brightness/Saturation
+                            if (!isOriginal && (retouchOpts.autoContrast || retouchOpts.brightness !== '1' || retouchOpts.saturation !== '1')) {
+                                pipeline = applyPostResizeAdjustments(pipeline, retouchOpts);
+                            }
+
+                            if (colorMode === 'gray') pipeline = pipeline.grayscale();
+
+                            let outExt = '.' + safeImgFormat;
+                            if (safeImgFormat === 'jpeg') {
+                                pipeline = pipeline.jpeg({ quality: compVal });
+                                outExt = '.jpg';
+                            } else if (safeImgFormat === 'png') {
+                                pipeline = pipeline.png();
+                            } else if (safeImgFormat === 'tiff') {
+                                pipeline = pipeline.tiff();
+                            }
+
+                            await pipeline.toFile(path.join(processingDir, `${num}${outExt}`));
+                        } catch (sharpErr) {
+                            // Fallback: corrupt file that Sharp can't process → copy as-is
+                            logWarn(`[CONVERT] Sharp failed for image ${processedCount} (${srcPathStr.split('/').pop()}), copying raw: ${sharpErr.message}`);
+                            fs.copyFileSync(srcPath, path.join(processingDir, `${num}${ext}`));
                         }
-
-                        // Resize logic: DPI and MaxWidth are complementary (not exclusive)
-                        // Step 1: Apply DPI-based resizing if requested
-                        if (dpiVal) {
-                            try {
-                                const metadata = await pipeline.metadata();
-                                const sourceDensity = metadata.density || 72;
-                                const targetDensity = dpiVal;
-                                if (Math.abs(targetDensity - sourceDensity) / sourceDensity > 0.02) {
-                                    const newWidth = Math.round(metadata.width * (targetDensity / sourceDensity));
-                                    pipeline = pipeline.resize(newWidth);
-                                }
-                                pipeline = pipeline.withMetadata({ density: targetDensity });
-                            } catch (e) {}
-                        }
-                        
-                        // Step 2: Apply MaxWidth limit if defined (after DPI resizing)
-                        if (maxW && maxW > 0) {
-                            try {
-                                const metadata = await pipeline.metadata();
-                                const willResize = metadata.width !== maxW;
-                                logDebug(`[CONVERT RESIZE] Image ${processedCount}: Source width=${metadata.width}px, MaxWidth=${maxW}px, Will resize: ${willResize} (${metadata.width < maxW ? 'upscale' : metadata.width > maxW ? 'downscale' : 'no change'})`);
-                                if (willResize) {
-                                    pipeline = pipeline.resize({ width: maxW });
-                                }
-                            } catch (e) {}
-                        }
-
-                        // Advanced retouching (post-resize): Auto-contrast then Brightness/Saturation
-                        if (!isOriginal && (retouchOpts.autoContrast || retouchOpts.brightness !== '1' || retouchOpts.saturation !== '1')) {
-                            pipeline = applyPostResizeAdjustments(pipeline, retouchOpts);
-                        }
-
-                        if (colorMode === 'gray') pipeline = pipeline.grayscale();
-
-                        let outExt = '.' + safeImgFormat;
-                        if (safeImgFormat === 'jpeg') {
-                            pipeline = pipeline.jpeg({ quality: compVal });
-                            outExt = '.jpg';
-                        } else if (safeImgFormat === 'png') {
-                            pipeline = pipeline.png();
-                        } else if (safeImgFormat === 'tiff') {
-                            pipeline = pipeline.tiff();
-                        }
-
-                        await pipeline.toFile(path.join(processingDir, `${num}${outExt}`));
                     } else {
                         fs.copyFileSync(srcPath, path.join(processingDir, `${num}${ext}`));
                     }
@@ -1459,7 +1511,7 @@ app.post('/convert', upload.array('files'), async (req, res) => {
                 try {
                     const images = fs.readdirSync(tempDir).filter(f => /\.(jpg|jpeg|png|webp|tiff|tif|bmp)$/i.test(f)).sort();
                     if (images.length > 0) {
-                        const buffer = await sharp(path.join(tempDir, images[0])).resize(200).toBuffer();
+                        const buffer = await sharp(path.join(tempDir, images[0]), { failOn: 'none' }).resize(200).toBuffer();
                         thumbnail = `data:image/jpeg;base64,${buffer.toString('base64')}`;
                     }
                 } catch(e) { logWarn("Final Thumbnail generation error:", e); }

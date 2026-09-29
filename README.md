@@ -34,6 +34,13 @@ Features
 
 Changelog
 ---------
+### v1.3.2
+- **Fix: Corrupt JPEG support** — JPEG images with extraneous bytes (common in scanned CBR/CBZ archives) no longer cause a 500 error. Files are sanitized via `jpegtran` before Sharp processing; fallback to raw copy if sanitization also fails.
+- **Fix: Page range (multi-source images)** — `pageStart`/`pageEnd` range was ignored when sources were uploaded images (`processMergeTask`). Now correctly applied via `slice()` before processing.
+- **Fix: Archive image sort order** — Images extracted from archives were sorted lexicographically (`page10` before `page2`). Fixed to natural numeric sort (`localeCompare` with `numeric: true`).
+- **Fix: File counter display** — File counter in orange was double-incremented (once on `thumbnail-init`, once on `progress`). Now driven solely by server-side `currentFileIndex`.
+- **Improvement: `jpegtran` added** — `libjpeg-turbo-progs` added to the Docker image for lossless JPEG sanitization.
+
 ### v1.3.1
 - **Fix: Before/After preview** — Canvas clipping (`beginPath` before each `clip`) corrected; both images now properly overlaid with the slider.
 - **Fix: Preview image pipeline** — "Before" is now the untouched original resized to 400px; "After" applies geometry (rotation/deskew/crop) then color (contrast/brightness/saturation) on the same base image.

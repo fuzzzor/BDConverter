@@ -8,11 +8,12 @@ RUN echo "deb http://deb.debian.org/debian bookworm main contrib non-free non-fr
     && echo "deb http://deb.debian.org/debian-security bookworm-security main contrib non-free non-free-firmware" >> /etc/apt/sources.list \
     && rm -f /etc/apt/sources.list.d/debian.sources
 
-# Install poppler-utils and 7zip via apt
+# Install poppler-utils, 7zip, and libjpeg-turbo-progs (jpegtran for corrupt JPEG sanitization)
 RUN apt-get update && apt-get install -y \
     poppler-utils \
     p7zip-full \
     wget \
+    libjpeg-turbo-progs \
     && rm -rf /var/lib/apt/lists/*
 
 # Install RAR 6.24 from RARLAB (pinned — RAR 7.x dropped -ma4/RAR4 support)

@@ -667,12 +667,8 @@ btnConvert.addEventListener('click', async () => {
     const data = JSON.parse(event.data);
 
     if (data.type === 'thumbnail-init') {
-      fileCounter += 1;
-
-      if (fileCounterEl) {
-        const tpl = currentTranslations['progress.file'] || "File # {current} / {total}";
-        fileCounterEl.innerText = tpl.replace('{current}', fileCounter).replace('{total}', totalFiles);
-      }
+      // Don't increment fileCounter here — progress events with currentFileIndex are the source of truth.
+      // Just update the page counter display.
       if (pageCounterEl) pageCounterEl.innerText = `Page : ${cumulativeCompletedPages} / ${totalImages}`;
 
       const isOriginal = document.getElementById('dpi')?.value === 'original';
