@@ -166,6 +166,9 @@ let filesPageCounts = [];
 let conversionStartTime = 0;
 let cumulativeCompletedPages = 0; // Persistent counter for completed pages (left counter)
 let _completedTaskKeys = new Set(); // Tracks already-counted tasks within one conversion session
+// The files are sent in several requests (one per document / image folder): the server numbers the
+// files per request, so its "file x / y" counter is shifted to the position in the whole batch
+let batchState = { active: false, offset: 0, total: 0 };
 
 // Compression slider
 sliderCompression.addEventListener('input', (e) => {
@@ -665,6 +668,10 @@ btnConvert.addEventListener('click', async () => {
 
   eventSource.onmessage = (event) => {
     const data = JSON.parse(event.data);
+    if (batchState.active) {
+      if (typeof data.currentFileIndex === 'number') data.currentFileIndex += batchState.offset;
+      if (typeof data.totalFiles === 'number') data.totalFiles = batchState.total;
+    }
 
     if (data.type === 'thumbnail-init') {
       // Don't increment fileCounter here — progress events with currentFileIndex are the source of truth.
@@ -771,14 +778,8 @@ btnConvert.addEventListener('click', async () => {
     }
   };
 
+  // Conversion settings (the files are added per request below)
   const formData = new FormData();
-  const filePaths = [];
-  selectedFiles.forEach(f => {
-      formData.append('files', f);
-      // Store path separately to ensure server gets it
-      filePaths.push(f.fullPath || f.webkitRelativePath || f.name);
-  });
-  formData.append('filePaths', JSON.stringify(filePaths));
   formData.append('requestId', requestId);
   
   // ✅ CRITICAL FIX: send ALL parameters to the server
@@ -805,26 +806,70 @@ btnConvert.addEventListener('click', async () => {
   formData.append('brightness', brightnessSelect ? sliderToFactor(brightnessSelect.value) : '1');
   formData.append('saturation', saturationSelect ? sliderToFactor(saturationSelect.value) : '1');
 
-  try {
-    const response = await fetch('/convert', { method: 'POST', body: formData });
-    
-    if (!response.ok) {
-        const errorText = await response.text();
-        throw new Error(`Server Error (${response.status}): ${errorText}`);
+  // Send the files in several small requests instead of one giant upload: one request per
+  // document, one per folder of images (merged into one archive), one for loose images.
+  // A big batch (several GB) no longer has to be uploaded at once, and one failing file no
+  // longer cancels the others.
+  const isImageName = (p) => /\.(jpg|jpeg|png|tif|tiff|bmp|webp)$/i.test(p);
+  const groups = [];
+  const imageGroups = {};
+  selectedFiles.forEach(f => {
+    const p = f.fullPath || f.webkitRelativePath || f.name;
+    if (isImageName(p)) {
+      const parts = p.replace(/\\/g, '/').replace(/^\/+/, '').split('/');
+      const key = parts.length > 1 ? parts[0] : '';
+      if (!imageGroups[key]) { imageGroups[key] = { files: [], paths: [] }; groups.push(imageGroups[key]); }
+      imageGroups[key].files.push(f);
+      imageGroups[key].paths.push(p);
+    } else {
+      groups.push({ files: [f], paths: [p] });
     }
+  });
 
-    const result = await response.json();
+  const stats = { totalFiles: 0, totalPages: 0, totalSize: 0, outputDir: '', files: [] };
+  const errors = [];
+  batchState = { active: true, offset: 0, total: groups.length };
+  try {
+    for (const [i, group] of groups.entries()) {
+      batchState.offset = i;
+      const part = new FormData();
+      for (const [key, value] of formData.entries()) part.append(key, value);
+      group.files.forEach(f => part.append('files', f));
+      part.append('filePaths', JSON.stringify(group.paths));
+      try {
+        const response = await fetch('/convert', { method: 'POST', body: part });
+        if (!response.ok) {
+          const errorText = await response.text();
+          throw new Error(`Server Error (${response.status}): ${errorText}`);
+        }
+        const result = await response.json();
+        const st = result.stats || {};
+        stats.totalFiles += st.totalFiles || 0;
+        stats.totalPages += st.totalPages || 0;
+        stats.totalSize += st.totalSize || 0;
+        stats.files = stats.files.concat(st.files || []);
+        if (st.outputDir && !stats.outputDir.split(' ; ').includes(st.outputDir)) {
+          stats.outputDir = stats.outputDir ? `${stats.outputDir} ; ${st.outputDir}` : st.outputDir;
+        }
+      } catch (e) {
+        console.error(e);
+        errors.push(`${group.paths[0]}: ${e.message}`);
+      }
+    }
+    if (!stats.totalFiles && errors.length) throw new Error(errors.join('\n'));
 
     // Wait a bit for final SSE events to be processed before showing summary
     await new Promise(resolve => setTimeout(resolve, 300));
     
-    showSummary(result.stats);
+    showSummary(stats);
+    if (errors.length) alert(`${errors.length} file(s) could not be converted:\n\n${errors.join('\n')}`);
   } catch (e) {
     console.error(e);
     alert(`Error: ${e.message}`);
     btnConvert.disabled = false;
     btnConvert.innerText = originalBtnText;
   } finally {
+    batchState.active = false;
     eventSource.close();
   }
 });

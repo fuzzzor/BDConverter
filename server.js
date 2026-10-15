@@ -1618,6 +1618,10 @@ app.post('/convert', upload.array('files'), async (req, res) => {
     }
 });
 
-app.listen(port, () => {
+const server = app.listen(port, () => {
     logInfo(`BDConverter server started on http://localhost:${port} | Log level: ${LOG_LEVEL.toUpperCase()} | Theme: ${activeTheme}`);
 });
+
+// No time limit for receiving a request: Node closes requests that take more than 5 minutes
+// (requestTimeout default since Node 18), which cut big uploads on slow networks.
+server.requestTimeout = 0;
