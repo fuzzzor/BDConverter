@@ -97,6 +97,25 @@ Environment variables
 - `OUTPUT_DIR` — persistent output directory for converted file(s) (default: ./output)
 - `FEATURE_PROGRESS_THUMBNAIL` — set to `0` to disable progressive thumbnails (default: enabled)
 - `LOGS` — Log level: `info` (default, shows task start/end) or `debug` (detailed image-by-image logs)
+- `LIBRARY_DIR` — optional: folder of your comic library inside the container. Enables the **Destination** option (see below).
+
+Destination: next to the original file (optional)
+-------------------------------------------------
+When `LIBRARY_DIR` is set, a **Destination** field appears in the UI:
+
+- **Next to the original file (automatic)** — default. The original of each dropped file is found in the library by its name (and size when several files share the same name), and the converted file is placed in the same folder.
+- **Default output folder** — previous behaviour (`OUTPUT_DIR`).
+- **Choose a folder…** — browse the library and pick (or create) a folder.
+
+Existing files are never overwritten (`Name.cbz` becomes `Name (2).cbz`), new files get the owner of their destination folder, and files whose original can't be found stay in the output folder.
+
+```yaml
+    environment:
+      - LIBRARY_DIR=/library
+    volumes:
+      - ./output:/app/output
+      - /path/to/your/comics:/library
+```
 
 Themes
 ------
