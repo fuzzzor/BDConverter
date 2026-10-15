@@ -204,6 +204,20 @@
             </div>
         </div>
 
+        <!-- ComicInfo.xml -->
+        <div class="control-group" style="grid-column: 1 / -1;">
+            <label class="toggle-row" title="Adds a ComicInfo.xml file (series, number, title, year) inside the archive, read by Kavita, Komga, YACReader...">
+                <span class="toggle-switch">
+                    <input type="checkbox" id="addComicInfo" checked>
+                    <span class="toggle-slider"></span>
+                </span>
+                <span class="toggle-text">
+                    <span data-i18n="controls.comicinfo.label">Add ComicInfo.xml (series &amp; number)</span>
+                </span>
+            </label>
+            <small data-i18n="controls.comicinfo.hint">Series, number and title are deduced from the file and folder names (e.g. "Astérix - T02 - La serpe d'or"). Read by Kavita, Komga… Not added to PDF or folder outputs.</small>
+        </div>
+
         <!-- JPEG compression -->
         <div class="control-group" style="grid-column: 1 / -1;">
             <label data-i18n="controls.compression.label">Image Quality (JPEG Compression)</label>
