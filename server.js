@@ -163,6 +163,10 @@ if (!fs.existsSync(OUTPUT_DIR)) {
     fs.mkdirSync(OUTPUT_DIR, { recursive: true });
 }
 
+// Optional: place converted files in a mounted library (LIBRARY_DIR), e.g. next to the original
+const library = require('./library')({ logInfo, logWarn });
+library.register(app);
+
 // SSE endpoint for progress updates
 app.get('/events', (req, res) => {
     const requestId = req.query.requestId;
@@ -1591,6 +1595,9 @@ app.post('/convert', upload.array('files'), async (req, res) => {
              }
         }
 
+        // Optional library destination (next to the original, or a chosen library folder)
+        const libraryLabel = library.deliver(results, req.body.destDir, files);
+
         // Compute final statistics
         const totalSize = results.reduce((acc, r) => acc + r.size, 0);
         const totalPagesConverted = results.reduce((acc, r) => acc + (r.pages || 0), 0);
@@ -1604,7 +1611,7 @@ app.post('/convert', upload.array('files'), async (req, res) => {
                 totalFiles: results.length,
                 totalPages: totalPagesConverted,
                 totalSize: totalSize,
-                outputDir: OUTPUT_DIR,
+                outputDir: libraryLabel || OUTPUT_DIR,
                 files: results
             }
         });

@@ -51,6 +51,9 @@ async function loadTranslations(lang = 'en') {
 }
 
 function applyTranslations(dict) {
+  // Destination selector labels are generated in JS
+  if (typeof destEnabled !== 'undefined' && destEnabled) renderDestSelect();
+
   // Text content
   document.querySelectorAll('[data-i18n]').forEach(el => {
     const key = el.getAttribute('data-i18n');
@@ -792,6 +795,7 @@ btnConvert.addEventListener('click', async () => {
   formData.append('archiveCompression', document.getElementById('archiveCompression').value);
   formData.append('rotation', document.getElementById('rotation').value);
   formData.append('imgFormat', document.getElementById('imgFormat').value);
+  formData.append('destDir', getDestDir());
   // New parameters: split double pages & reading direction
   const splitVal = document.getElementById('splitDouble') ? document.getElementById('splitDouble').value : 'no';
   const readingVal = document.getElementById('readingDir') ? document.getElementById('readingDir').value : 'ltr';
@@ -1170,3 +1174,445 @@ if (btnPreviewClose) {
 // Refresh preview button availability whenever files or mode change
 dpiSelect.addEventListener('change', updatePreviewButtonState);
 updatePreviewButtonState();
+
+// ============================================================
+// DESTINATION (optional, enabled server-side with LIBRARY_DIR)
+// Place converted files next to the original file, or in a chosen library folder.
+// ============================================================
+const DEST_ORIGIN = ':origin';
+const DEST_STORAGE_KEY = 'bdc-destDir';
+var destEnabled = false; // var: read by applyTranslations()
+let destDir = '';
+let destCurrent = '';
+let destLocated = { key: '', dirs: [] };
+// Folder browser mode: 'dest' (choose a destination) or 'convert' (convert library folders)
+let destMode = 'dest';
+let folderSelection = [];
+let folderRows = [];
+let folderLastIdx = null;
+
+const destGroup = document.getElementById('dest-group');
+const destSelect = document.getElementById('destination');
+const destHint = document.getElementById('dest-hint');
+const destModal = document.getElementById('dest-modal');
+const destList = document.getElementById('dest-list');
+const destCrumb = document.getElementById('dest-crumb');
+const destInfo = document.getElementById('dest-info');
+const destOriginInfo = document.getElementById('dest-origin-info');
+
+function tr(key, fallback, args) {
+  let value = currentTranslations[key] || fallback;
+  if (args) Object.keys(args).forEach(k => { value = value.replace(`{${k}}`, args[k]); });
+  return value;
+}
+
+// Value sent with each conversion ('' = default output folder)
+function getDestDir() {
+  return destEnabled ? destDir : '';
+}
+
+function setDestDir(value) {
+  destDir = value || '';
+  try { localStorage.setItem(DEST_STORAGE_KEY, destDir || ':output'); } catch (e) {}
+  renderDestSelect();
+}
+
+function renderDestSelect() {
+  destSelect.innerHTML = '';
+  const add = (value, label) => {
+    const o = document.createElement('option');
+    o.value = value;
+    o.textContent = label;
+    destSelect.appendChild(o);
+  };
+  add(DEST_ORIGIN, tr('destination.origin', '📍 Next to the original file (automatic)'));
+  add('', tr('destination.output', 'Default output folder'));
+  if (destDir && destDir !== DEST_ORIGIN) add(destDir, '📁 ' + destDir);
+  add('__browse', tr('destination.choose', '📂 Choose a folder…'));
+  destSelect.value = destDir;
+  refreshDestHint();
+}
+
+function destFilesKey(files) {
+  return files.map(f => f.name + ':' + f.size).join('|');
+}
+
+// Ask the server where the originals of the selected files are
+async function locateOriginals(files) {
+  const key = destFilesKey(files);
+  if (key === destLocated.key) return destLocated.dirs;
+  try {
+    const res = await fetch('/library/locate', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ files: files.map(f => ({ name: f.name, size: f.size })) })
+    });
+    const data = await res.json();
+    destLocated = { key, dirs: data.dirs || [] };
+  } catch (e) {
+    destLocated = { key, dirs: [] };
+  }
+  return destLocated.dirs;
+}
+
+async function refreshDestHint() {
+  if (!destEnabled || destDir !== DEST_ORIGIN) { destHint.textContent = ''; return; }
+  const docs = selectedFiles.filter(f => !/\.(jpe?g|png|tiff?|bmp|webp)$/i.test(f.name));
+  if (!docs.length) {
+    destHint.textContent = tr('destination.hint_origin', 'Each converted file is placed next to its original (found in the library by its name).');
+    return;
+  }
+  destHint.textContent = tr('destination.searching', 'Looking for the originals…');
+  const dirs = await locateOriginals(docs);
+  if (destDir !== DEST_ORIGIN) return;
+  const found = dirs.filter(Boolean);
+  const unique = [...new Set(found)];
+  const missing = docs.length - found.length;
+  let text;
+  if (!found.length) text = tr('destination.not_found', '⚠️ Original not found in the library: the converted file will stay in the output folder.');
+  else if (unique.length === 1) text = tr('destination.found_one', '✅ Destination: /{dir}', { dir: unique[0] });
+  else text = tr('destination.found_many', '✅ {count} file(s) found, in {dirs} different folders', { count: found.length, dirs: unique.length });
+  if (found.length && missing) text += ' — ' + tr('destination.some_missing', '⚠️ {count} not found, they will stay in the output folder', { count: missing });
+  destHint.textContent = text;
+}
+
+function destItem(label, onClick, bold) {
+  const it = document.createElement('div');
+  it.textContent = label;
+  it.style.cssText = 'padding:8px 12px; cursor:pointer; border-bottom:1px solid rgba(128,128,128,0.2);' + (bold ? 'font-weight:bold;' : '');
+  it.addEventListener('mouseenter', () => { it.style.background = 'rgba(255,152,0,0.15)'; });
+  it.addEventListener('mouseleave', () => { it.style.background = ''; });
+  it.addEventListener('click', onClick);
+  return it;
+}
+
+async function loadDestFolder(p) {
+  destList.textContent = tr('destination.loading', 'Loading…');
+  try {
+    const res = await fetch('/library/list?path=' + encodeURIComponent(p || ''));
+    const data = await res.json();
+    if (data.error) throw new Error(data.error);
+    destCurrent = data.path || '';
+    destCrumb.textContent = '📂 /' + destCurrent;
+    destInfo.textContent = tr('destination.folder_info', '{dirs} sub-folder(s) • {files} comic(s) in this folder', { dirs: data.dirs.length, files: data.files });
+    destList.innerHTML = '';
+    if (destCurrent) {
+      const parent = destCurrent.split('/').slice(0, -1).join('/');
+      destList.appendChild(destItem('⬆️  ' + tr('destination.parent', '.. (parent folder)'), () => loadDestFolder(parent), true));
+    }
+    if (!data.dirs.length) {
+      const empty = document.createElement('div');
+      empty.style.cssText = 'padding:8px 12px; opacity:0.6;';
+      empty.textContent = tr('destination.empty', '(no sub-folder)');
+      destList.appendChild(empty);
+    }
+    folderRows = [];
+    folderLastIdx = null;
+    if (destMode === 'convert' && data.dirs.length > 1) {
+      const all = destItem('☑  ' + tr('folders.toggle_all', 'Check / uncheck all (Shift+click on ☐ = range)'), () => {
+        const allOn = folderRows.every(r => folderSelection.includes(r.full));
+        folderRows.forEach(r => setFolderSelected(r.full, !allOn));
+        refreshFolderSelection();
+      });
+      all.style.opacity = '0.8';
+      all.style.fontSize = '0.9em';
+      destList.appendChild(all);
+    }
+    data.dirs.forEach(d => {
+      const full = destCurrent ? destCurrent + '/' + d : d;
+      const row = destItem('📁  ' + d, () => loadDestFolder(full));
+      if (destMode === 'convert') {
+        // Tick box: select the folder without entering it (Shift+click: whole range)
+        const box = document.createElement('span');
+        box.className = 'folder-check';
+        box.style.cssText = 'display:inline-block; width:1.8em; font-size:1.15em; cursor:pointer; user-select:none;';
+        const idx = folderRows.length;
+        folderRows.push({ full, box, row });
+        box.addEventListener('mousedown', (e) => { if (e.shiftKey) e.preventDefault(); });
+        box.addEventListener('click', (e) => { e.stopPropagation(); clickFolderBox(idx, e.shiftKey); });
+        row.insertBefore(box, row.firstChild);
+      }
+      destList.appendChild(row);
+    });
+    refreshFolderSelection();
+  } catch (e) {
+    destList.textContent = 'Error: ' + e.message;
+    if (p) setTimeout(() => loadDestFolder(''), 1200);
+  }
+}
+
+// The browser opens directly in the folder of the original when it can be found
+function setDestMode(mode) {
+  destMode = mode;
+  const convert = mode === 'convert';
+  const title = document.getElementById('dest-modal-title');
+  title.setAttribute('data-i18n', convert ? 'folders.modal_title' : 'destination.modal_title');
+  title.textContent = convert ? tr('folders.modal_title', '🗂️ Convert library folders') : tr('destination.modal_title', '📁 Choose the destination');
+  document.getElementById('btn-dest-origin').style.display = convert ? 'none' : '';
+  destOriginInfo.style.display = convert ? 'none' : '';
+  document.getElementById('folder-options').style.display = convert ? '' : 'none';
+  document.getElementById('btn-dest-mkdir').style.display = convert ? 'none' : '';
+  refreshFolderSelection();
+}
+
+async function openDestBrowser() {
+  setDestMode('dest');
+  destModal.style.display = 'flex';
+  destOriginInfo.textContent = '';
+  if (destDir && destDir !== DEST_ORIGIN) return loadDestFolder(destDir);
+  if (!selectedFiles.length) return loadDestFolder('');
+  destList.textContent = tr('destination.searching', 'Looking for the originals…');
+  const first = (await locateOriginals(selectedFiles)).filter(Boolean)[0];
+  destOriginInfo.textContent = first
+    ? tr('destination.origin_found', 'Original found in: /{dir}', { dir: first })
+    : tr('destination.origin_not_found', 'Original not found in the library');
+  loadDestFolder(first || '');
+}
+
+async function initDestination() {
+  try {
+    const res = await fetch('/library/config');
+    destEnabled = !!(await res.json()).enabled;
+  } catch (e) { destEnabled = false; }
+  if (!destEnabled) return;
+
+  // Default: next to the original file
+  destDir = DEST_ORIGIN;
+  try {
+    const saved = localStorage.getItem(DEST_STORAGE_KEY);
+    if (saved === ':output') destDir = '';
+    else if (saved) destDir = saved;
+  } catch (e) {}
+
+  destGroup.style.display = '';
+  renderDestSelect();
+
+  destSelect.addEventListener('change', () => {
+    if (destSelect.value === '__browse') { destSelect.value = destDir; openDestBrowser(); }
+    else setDestDir(destSelect.value);
+  });
+  document.getElementById('btn-dest-browse').addEventListener('click', openDestBrowser);
+  document.getElementById('btn-dest-cancel').addEventListener('click', () => { destModal.style.display = 'none'; });
+  destModal.addEventListener('click', (e) => { if (e.target === destModal) destModal.style.display = 'none'; });
+  document.getElementById('btn-dest-origin').addEventListener('click', () => { setDestDir(DEST_ORIGIN); destModal.style.display = 'none'; });
+  document.getElementById('btn-dest-pick').addEventListener('click', () => {
+    if (destMode === 'convert') {
+      if (folderSelection.length) return startFolderConversion(folderSelection.slice());
+      if (destCurrent) return startFolderConversion([destCurrent]);
+      return;
+    }
+    if (!destCurrent) return; // the library root itself is not a valid destination
+    setDestDir(destCurrent);
+    destModal.style.display = 'none';
+  });
+  document.getElementById('btn-dest-mkdir').addEventListener('click', async () => {
+    const name = prompt(tr('destination.new_folder_prompt', 'New folder name:'));
+    if (!name) return;
+    try {
+      const res = await fetch('/library/mkdir', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ path: destCurrent, name: name.trim() })
+      });
+      const data = await res.json();
+      if (data.error) throw new Error(data.error);
+      loadDestFolder(data.path);
+    } catch (e) {
+      alert('Error: ' + e.message);
+    }
+  });
+
+  initFolderConversion();
+
+  // Refresh the hint when the file selection changes
+  let lastKey = '';
+  setInterval(() => {
+    const key = destFilesKey(selectedFiles);
+    if (key !== lastKey) { lastKey = key; refreshDestHint(); }
+  }, 800);
+}
+
+// ============================================================
+// CONVERT LIBRARY FOLDERS DIRECTLY ON THE SERVER (LIBRARY_DIR)
+// The server reads the files from its own disk: nothing goes through the browser,
+// and the conversion goes on even if the page is closed.
+// ============================================================
+function setFolderSelected(p, on) {
+  const i = folderSelection.indexOf(p);
+  if (on && i < 0) folderSelection.push(p);
+  if (!on && i >= 0) folderSelection.splice(i, 1);
+}
+
+function clickFolderBox(idx, shift) {
+  const on = !folderSelection.includes(folderRows[idx].full);
+  if (shift && folderLastIdx !== null && folderLastIdx < folderRows.length) {
+    const a = Math.min(folderLastIdx, idx), b = Math.max(folderLastIdx, idx);
+    for (let k = a; k <= b; k++) setFolderSelected(folderRows[k].full, on);
+  } else {
+    setFolderSelected(folderRows[idx].full, on);
+  }
+  folderLastIdx = idx;
+  refreshFolderSelection();
+}
+
+// Updates the boxes in place (the list keeps its scroll position), the selection summary and the button
+function refreshFolderSelection() {
+  folderRows.forEach(r => {
+    const on = folderSelection.includes(r.full);
+    r.box.textContent = on ? '☑' : '☐';
+    r.row.style.fontWeight = on ? 'bold' : '';
+  });
+  const pick = document.getElementById('btn-dest-pick');
+  const box = document.getElementById('folder-selection');
+  if (destMode !== 'convert') {
+    pick.setAttribute('data-i18n', 'destination.pick');
+    pick.textContent = tr('destination.pick', 'Choose this folder');
+    return;
+  }
+  pick.removeAttribute('data-i18n');
+  pick.textContent = folderSelection.length
+    ? tr('folders.convert_selection', '▶ Convert the selection ({count})', { count: folderSelection.length })
+    : tr('folders.convert_current', '▶ Convert this folder');
+  box.innerHTML = '';
+  if (!folderSelection.length) {
+    box.textContent = tr('folders.selection_hint', 'Tick one or more folders (☐), or convert the folder shown.');
+    box.style.opacity = '0.7';
+    return;
+  }
+  box.style.opacity = '1';
+  const strong = document.createElement('b');
+  strong.textContent = tr('folders.selection', '✅ Selection ({count}):', { count: folderSelection.length }) + ' ';
+  box.appendChild(strong);
+  folderSelection.forEach(p => {
+    const chip = document.createElement('span');
+    chip.textContent = (p.split('/').pop() || p) + ' ✕';
+    chip.title = '/' + p;
+    chip.style.cssText = 'display:inline-block; margin:2px 4px; padding:2px 8px; border-radius:10px; background:rgba(255,152,0,0.2); cursor:pointer;';
+    chip.addEventListener('click', () => { setFolderSelected(p, false); refreshFolderSelection(); });
+    box.appendChild(chip);
+  });
+}
+
+// Same settings as a normal conversion
+function readConversionOptions() {
+  const val = (id) => { const el = document.getElementById(id); return el ? el.value : ''; };
+  const checked = (id) => { const el = document.getElementById(id); return !!(el && el.checked); };
+  const options = {
+    dpi: val('dpi'), maxWidth: val('maxWidth'), colorMode: val('colorMode'), format: val('format'),
+    compression: val('compression'), archiveCompression: val('archiveCompression'), rotation: val('rotation'),
+    imgFormat: val('imgFormat'), splitDouble: val('splitDouble') || 'no', readingDir: val('readingDir') || 'ltr',
+    cropMargins: cropMarginsSelect ? cropMarginsSelect.value : '',
+    deskew: checked('deskew') ? 'true' : 'false', autoContrast: checked('auto-contrast') ? 'true' : 'false',
+    brightness: brightnessSelect ? sliderToFactor(brightnessSelect.value) : '1',
+    saturation: saturationSelect ? sliderToFactor(saturationSelect.value) : '1'
+  };
+  // ComicInfo.xml option, when available
+  const ci = document.getElementById('addComicInfo');
+  if (ci) options.addComicInfo = ci.checked ? 'true' : 'false';
+  return options;
+}
+
+async function startFolderConversion(folders) {
+  const options = readConversionOptions();
+  if (options.format === 'pdf' || options.format === 'folder') {
+    alert(tr('folders.need_archive', 'Choose an archive format (CBZ, CBR…) to convert folders.'));
+    return;
+  }
+  const types = ['.pdf'];
+  if (document.getElementById('folder-cbr').checked) types.push('.cbr');
+  const recursive = document.getElementById('folder-recursive').checked;
+  const where = folders.length === 1 ? '/' + folders[0] : folders.map(p => p.split('/').pop()).join(', ');
+  try {
+    const res = await fetch('/library/scan', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ paths: folders, recursive, types, format: options.format })
+    });
+    const scan = await res.json();
+    if (scan.error) throw new Error(scan.error);
+    if (!scan.count) {
+      alert(tr('folders.nothing', 'Nothing to convert in {where} ({already} already converted).', { where, already: scan.already }));
+      return;
+    }
+    const msg = tr('folders.confirm', '{count} file(s) to convert in {where}. {already} already converted will be skipped. Each converted file is placed next to its original, with the current settings. Start?',
+      { count: scan.count, where, already: scan.already });
+    if (!confirm(msg)) return;
+    const start = await fetch('/library/convert-folders', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ paths: folders, recursive, types, options })
+    });
+    const job = await start.json();
+    if (job.error) throw new Error(job.error);
+    folderSelection = [];
+    destModal.style.display = 'none';
+    showFolderJob(job);
+    pollFolderJob();
+  } catch (e) {
+    alert('Error: ' + e.message);
+  }
+}
+
+function formatDuration(ms) {
+  const s = Math.round(ms / 1000), m = Math.floor(s / 60), h = Math.floor(m / 60);
+  return h ? `${h} h ${m % 60} min` : m ? `${m} min ${s % 60} s` : `${s} s`;
+}
+
+function showFolderJob(job) {
+  const box = document.getElementById('folder-job');
+  if (!job || job.state === 'none') { box.style.display = 'none'; return; }
+  box.style.display = '';
+  const processed = job.done + job.errorCount;
+  const pct = job.total ? Math.round(processed / job.total * 100) : 100;
+  document.getElementById('folder-job-bar').style.width = pct + '%';
+  const elapsed = (job.finishedAt || Date.now()) - job.startedAt;
+  job.label = job.label || tr('folders.n_folders', '{count} folders', { count: job.folderCount });
+  let text;
+  if (job.state === 'running') {
+    const eta = processed ? formatDuration(elapsed / processed * (job.total - processed)) : '…';
+    text = tr('folders.running', '⏳ {label}: {processed} / {total} ({pct} %), about {eta} left', { label: job.label, processed, total: job.total, pct, eta });
+  } else if (job.state === 'cancelled') {
+    text = tr('folders.cancelled', '⏹ Stopped: {done} converted out of {total} in {label}', { done: job.done, total: job.total, label: job.label });
+  } else {
+    text = tr('folders.finished', '✅ Done in {duration}: {done} converted in {label}', { duration: formatDuration(elapsed), done: job.done, label: job.label });
+  }
+  if (job.skipped) text += ' — ' + tr('folders.skipped', '{count} already done, skipped', { count: job.skipped });
+  document.getElementById('folder-job-text').textContent = text;
+  document.getElementById('folder-job-current').textContent = job.state === 'running' && job.current.length ? '▶ ' + job.current.join(' • ') : '';
+  document.getElementById('folder-job-errors').textContent = job.errorCount
+    ? '⚠️ ' + tr('folders.errors', '{count} error(s):', { count: job.errorCount }) + ' ' + job.errors.join(' | ') : '';
+  document.getElementById('btn-folder-stop').style.display = job.state === 'running' ? '' : 'none';
+  document.getElementById('btn-folder-convert').disabled = job.state === 'running';
+}
+
+let folderPollTimer = null;
+async function pollFolderJob() {
+  clearTimeout(folderPollTimer);
+  try {
+    const job = await (await fetch('/library/folder-job')).json();
+    showFolderJob(job);
+    if (job.state === 'running') folderPollTimer = setTimeout(pollFolderJob, 2000);
+  } catch (e) {
+    folderPollTimer = setTimeout(pollFolderJob, 5000);
+  }
+}
+
+function initFolderConversion() {
+  document.getElementById('btn-folder-convert').addEventListener('click', () => {
+    setDestMode('convert');
+    destModal.style.display = 'flex';
+    let last = '';
+    try { last = localStorage.getItem('bdc-lastFolder') || ''; } catch (e) {}
+    loadDestFolder(last);
+  });
+  document.getElementById('btn-folder-stop').addEventListener('click', async () => {
+    if (!confirm(tr('folders.stop_confirm', 'Stop after the files being converted?'))) return;
+    await fetch('/library/folder-job/cancel', { method: 'POST' });
+    pollFolderJob();
+  });
+  // Remember where the user was browsing
+  destList.addEventListener('click', () => {
+    if (destMode === 'convert') setTimeout(() => { try { localStorage.setItem('bdc-lastFolder', destCurrent); } catch (e) {} }, 500);
+  });
+  pollFolderJob(); // shows a conversion already running (e.g. after reloading the page)
+}
+
+initDestination();
