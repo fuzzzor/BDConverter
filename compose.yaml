@@ -1,5 +1,4 @@
-version: '3.8'
-
+---
 services:
   bdconverter:
     build: .
@@ -7,15 +6,17 @@ services:
     ports:
       - "3111:3111"
     volumes:
-      - ./output:/app/output
-      - ./upload:/app/upload
+      - /volume1/fichiers/amule/bdconverter:/app/output
+    # - /volume1/docker/bdconverter/output:/app/output
+      - /volume1/docker/bdconverter/upload:/app/upload
+      - /volume1/docker/bdconverter/temp:/app/temp
     environment:
-      # Choose theme: 'default' or 'neon'
-      - THEME=default
-      
-      # Optional: Log level (info or debug)
-      - LOGS=info
-      
+      - NODE_ENV=production
+      - THEME=comic           # Choose theme: 'default' or 'neon'
+      - LOGS=info               # Optional: Log level (info or debug)
+      - PUID=1000
+      - PGID=100
+      - TIMEZONE=Europe/Paris
       # Optional: Custom directories
       # - OUTPUT_DIR=/app/output
       # - UPLOAD_DIR=/app/upload
@@ -23,18 +24,4 @@ services:
       
       # Optional: Enable/disable progress thumbnail feature
       # - FEATURE_PROGRESS_THUMBNAIL=1
-    restart: unless-stopped
-
-  # Example with neon theme
-  bdconverter-neon:
-    build: .
-    container_name: bdconverter-neon
-    ports:
-      - "3112:3111"
-    volumes:
-      - ./output:/app/output
-      - ./upload:/app/upload
-    environment:
-      - THEME=neon
-      - LOGS=info
     restart: unless-stopped
