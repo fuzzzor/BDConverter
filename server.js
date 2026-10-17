@@ -1540,7 +1540,10 @@ app.post('/convert', upload.array('files'), async (req, res) => {
             const name = file.originalname.replace(/\\/g, '/');
             const parts = name.split('/');
             
-            if (parts.length > 1) {
+            // Only images are grouped by folder (merged into one archive per folder).
+            // Documents (PDF, CBZ, CBR...) found inside a dropped folder are converted
+            // individually, exactly like documents dropped at the root.
+            if (parts.length > 1 && isImageFile(file)) {
                 // Inside a folder
                 const rootDir = parts[0];
                 if (!groups[rootDir]) groups[rootDir] = [];
