@@ -97,7 +97,8 @@ Environment variables
 - `OUTPUT_DIR` — persistent output directory for converted file(s) (default: ./output)
 - `FEATURE_PROGRESS_THUMBNAIL` — set to `0` to disable progressive thumbnails (default: enabled)
 - `LOGS` — Log level: `info` (default, shows task start/end) or `debug` (detailed image-by-image logs)
-- `LIBRARY_DIR` — optional: folder of your comic library inside the container. Enables the **Destination** option (see below).
+- `LIBRARY_DIR` — optional: folder of your comic library inside the container. Enables the **Destination** option and the conversion of library folders (see below).
+- `FOLDER_CONCURRENCY` — number of files converted at the same time when converting library folders (default: 2)
 
 Destination: next to the original file (optional)
 -------------------------------------------------
@@ -131,6 +132,15 @@ The **Add ComicInfo.xml** option (enabled by default) writes a `ComicInfo.xml` a
 | `Shutter island (2008).pdf` (one-shot) | Shutter island | | | 2008 |
 
 Recognised volume markers: `T02`, `T.2`, `Tome 2`, `Vol. 3`, `Volume 3`, `INT01`, `Intégrale 1`, `#4`, `n°4`.
+
+Convert library folders on the server (optional)
+------------------------------------------------
+When `LIBRARY_DIR` is set, the **Convert library folders on the server…** button lets you tick one or more folders of the library (Shift+click for a range, or check them all) and convert them **directly on the server**: the files are read from the server's disk instead of being uploaded by the browser, which is much faster when the library is on the same machine, and the conversion goes on even if the page is closed.
+
+- Each converted file is placed next to its original, with the current settings (rendering mode, format, compression…).
+- Files that already have their converted version next to them are skipped, so a folder can be converted again safely.
+- Sub-folders can be included, and CBR files can be converted too (e.g. CBR → CBZ).
+- `FOLDER_CONCURRENCY` (default `2`) sets how many files are converted at the same time.
 
 Themes
 ------
