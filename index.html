@@ -204,6 +204,16 @@
             </div>
         </div>
 
+        <!-- Destination (only shown when LIBRARY_DIR is configured) -->
+        <div class="control-group" id="dest-group" style="grid-column: 1 / -1; display:none;">
+            <label data-i18n="destination.label">Destination of converted files</label>
+            <div style="display:flex; gap:10px; align-items:center;">
+                <select id="destination" style="flex:1; min-width:0;" title="Where to place the converted files."></select>
+                <button type="button" id="btn-dest-browse" class="modal-btn btn-primary" style="white-space:nowrap; padding:8px 14px;" data-i18n="destination.browse">Browse…</button>
+            </div>
+            <div id="dest-hint" style="font-size:0.75em; opacity:0.8; margin-top:4px; word-break:break-word;"></div>
+        </div>
+
         <!-- JPEG compression -->
         <div class="control-group" style="grid-column: 1 / -1;">
             <label data-i18n="controls.compression.label">Image Quality (JPEG Compression)</label>
@@ -377,6 +387,23 @@
             <div class="modal-actions">
                 <!-- <button class="modal-btn btn-primary" id="btn-open-folder">Open folder</button> -->
                 <button class="modal-btn btn-secondary" id="btn-close-modal" data-i18n="buttons.close">Close</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- DESTINATION FOLDER BROWSER MODAL -->
+    <div id="dest-modal" class="modal">
+        <div class="modal-content" style="text-align:left; width:640px;">
+            <h2 style="text-align:center;" data-i18n="destination.modal_title">📁 Choose the destination</h2>
+            <button type="button" id="btn-dest-origin" class="modal-btn btn-primary" style="width:100%; margin:6px 0 4px;" data-i18n="destination.origin">📍 Next to the original file (automatic)</button>
+            <div id="dest-origin-info" style="font-size:0.75em; opacity:0.75; text-align:center; margin-bottom:10px;"></div>
+            <div id="dest-crumb" style="margin:10px 0 4px; font-family:monospace; word-break:break-all; opacity:0.9;"></div>
+            <div id="dest-info" style="font-size:0.8em; opacity:0.7; margin-bottom:8px;"></div>
+            <div id="dest-list" style="max-height:40vh; overflow:auto; border:1px solid rgba(128,128,128,0.4); border-radius:6px;"></div>
+            <div class="modal-actions" style="flex-wrap:wrap;">
+                <button type="button" class="modal-btn btn-secondary" id="btn-dest-mkdir" data-i18n="destination.new_folder">＋ New folder</button>
+                <button type="button" class="modal-btn btn-secondary" id="btn-dest-cancel" data-i18n="destination.cancel">Cancel</button>
+                <button type="button" class="modal-btn btn-primary" id="btn-dest-pick" data-i18n="destination.pick">Choose this folder</button>
             </div>
         </div>
     </div>
