@@ -1,0 +1,40 @@
+version: '3.8'
+
+services:
+  bdconverter:
+    build: .
+    container_name: bdconverter
+    ports:
+      - "3111:3111"
+    volumes:
+      - ./output:/app/output
+      - ./upload:/app/upload
+    environment:
+      # Choose theme: 'default' or 'neon'
+      - THEME=default
+      
+      # Optional: Log level (info or debug)
+      - LOGS=info
+      
+      # Optional: Custom directories
+      # - OUTPUT_DIR=/app/output
+      # - UPLOAD_DIR=/app/upload
+      # - TEMP_DIR=/app/temp
+      
+      # Optional: Enable/disable progress thumbnail feature
+      # - FEATURE_PROGRESS_THUMBNAIL=1
+    restart: unless-stopped
+
+  # Example with neon theme
+  bdconverter-neon:
+    build: .
+    container_name: bdconverter-neon
+    ports:
+      - "3112:3111"
+    volumes:
+      - ./output:/app/output
+      - ./upload:/app/upload
+    environment:
+      - THEME=neon
+      - LOGS=info
+    restart: unless-stopped
