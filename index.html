@@ -212,6 +212,17 @@
                 <button type="button" id="btn-dest-browse" class="modal-btn btn-primary" style="white-space:nowrap; padding:8px 14px;" data-i18n="destination.browse">Browse…</button>
             </div>
             <div id="dest-hint" style="font-size:0.75em; opacity:0.8; margin-top:4px; word-break:break-word;"></div>
+            <!-- Convert library folders directly on the server -->
+            <button type="button" id="btn-folder-convert" class="modal-btn btn-secondary" style="width:100%; margin-top:10px;" data-i18n="folders.button">🗂️ Convert library folders on the server…</button>
+            <div id="folder-job" style="display:none; margin-top:8px; padding:10px; border:1px solid rgba(128,128,128,0.4); border-radius:6px; font-size:0.85em;">
+                <div id="folder-job-text" style="word-break:break-word;"></div>
+                <div style="height:8px; background:rgba(128,128,128,0.3); border-radius:4px; margin:6px 0; overflow:hidden;">
+                    <div id="folder-job-bar" style="height:100%; width:0; background:#FF9800; transition:width 0.5s;"></div>
+                </div>
+                <div id="folder-job-current" style="opacity:0.75; word-break:break-all;"></div>
+                <div id="folder-job-errors" style="color:#e57373; word-break:break-word; margin-top:4px;"></div>
+                <button type="button" id="btn-folder-stop" class="modal-btn btn-secondary" style="margin-top:6px; padding:6px 12px;" data-i18n="folders.stop">⏹ Stop</button>
+            </div>
         </div>
 
         <!-- JPEG compression -->
@@ -394,12 +405,17 @@
     <!-- DESTINATION FOLDER BROWSER MODAL -->
     <div id="dest-modal" class="modal">
         <div class="modal-content" style="text-align:left; width:640px;">
-            <h2 style="text-align:center;" data-i18n="destination.modal_title">📁 Choose the destination</h2>
+            <h2 id="dest-modal-title" style="text-align:center;" data-i18n="destination.modal_title">📁 Choose the destination</h2>
             <button type="button" id="btn-dest-origin" class="modal-btn btn-primary" style="width:100%; margin:6px 0 4px;" data-i18n="destination.origin">📍 Next to the original file (automatic)</button>
             <div id="dest-origin-info" style="font-size:0.75em; opacity:0.75; text-align:center; margin-bottom:10px;"></div>
             <div id="dest-crumb" style="margin:10px 0 4px; font-family:monospace; word-break:break-all; opacity:0.9;"></div>
             <div id="dest-info" style="font-size:0.8em; opacity:0.7; margin-bottom:8px;"></div>
             <div id="dest-list" style="max-height:40vh; overflow:auto; border:1px solid rgba(128,128,128,0.4); border-radius:6px;"></div>
+            <div id="folder-options" style="display:none; margin:10px 0; font-size:0.9em;">
+                <div id="folder-selection" style="margin-bottom:6px; word-break:break-word;"></div>
+                <label style="display:block; cursor:pointer;"><input type="checkbox" id="folder-recursive" checked> <span data-i18n="folders.recursive">Include sub-folders</span></label>
+                <label style="display:block; cursor:pointer;"><input type="checkbox" id="folder-cbr"> <span data-i18n="folders.cbr">Also convert CBR files (in addition to PDF)</span></label>
+            </div>
             <div class="modal-actions" style="flex-wrap:wrap;">
                 <button type="button" class="modal-btn btn-secondary" id="btn-dest-mkdir" data-i18n="destination.new_folder">＋ New folder</button>
                 <button type="button" class="modal-btn btn-secondary" id="btn-dest-cancel" data-i18n="destination.cancel">Cancel</button>
