@@ -51,6 +51,9 @@ async function loadTranslations(lang = 'en') {
 }
 
 function applyTranslations(dict) {
+  // Destination selector labels are generated in JS
+  if (typeof destEnabled !== 'undefined' && destEnabled) renderDestSelect();
+
   // Text content
   document.querySelectorAll('[data-i18n]').forEach(el => {
     const key = el.getAttribute('data-i18n');
@@ -792,6 +795,7 @@ btnConvert.addEventListener('click', async () => {
   formData.append('archiveCompression', document.getElementById('archiveCompression').value);
   formData.append('rotation', document.getElementById('rotation').value);
   formData.append('imgFormat', document.getElementById('imgFormat').value);
+  formData.append('destDir', getDestDir());
   // New parameters: split double pages & reading direction
   const splitVal = document.getElementById('splitDouble') ? document.getElementById('splitDouble').value : 'no';
   const readingVal = document.getElementById('readingDir') ? document.getElementById('readingDir').value : 'ltr';
@@ -1170,3 +1174,208 @@ if (btnPreviewClose) {
 // Refresh preview button availability whenever files or mode change
 dpiSelect.addEventListener('change', updatePreviewButtonState);
 updatePreviewButtonState();
+
+// ============================================================
+// DESTINATION (optional, enabled server-side with LIBRARY_DIR)
+// Place converted files next to the original file, or in a chosen library folder.
+// ============================================================
+const DEST_ORIGIN = ':origin';
+const DEST_STORAGE_KEY = 'bdc-destDir';
+var destEnabled = false; // var: read by applyTranslations()
+let destDir = '';
+let destCurrent = '';
+let destLocated = { key: '', dirs: [] };
+
+const destGroup = document.getElementById('dest-group');
+const destSelect = document.getElementById('destination');
+const destHint = document.getElementById('dest-hint');
+const destModal = document.getElementById('dest-modal');
+const destList = document.getElementById('dest-list');
+const destCrumb = document.getElementById('dest-crumb');
+const destInfo = document.getElementById('dest-info');
+const destOriginInfo = document.getElementById('dest-origin-info');
+
+function tr(key, fallback, args) {
+  let value = currentTranslations[key] || fallback;
+  if (args) Object.keys(args).forEach(k => { value = value.replace(`{${k}}`, args[k]); });
+  return value;
+}
+
+// Value sent with each conversion ('' = default output folder)
+function getDestDir() {
+  return destEnabled ? destDir : '';
+}
+
+function setDestDir(value) {
+  destDir = value || '';
+  try { localStorage.setItem(DEST_STORAGE_KEY, destDir || ':output'); } catch (e) {}
+  renderDestSelect();
+}
+
+function renderDestSelect() {
+  destSelect.innerHTML = '';
+  const add = (value, label) => {
+    const o = document.createElement('option');
+    o.value = value;
+    o.textContent = label;
+    destSelect.appendChild(o);
+  };
+  add(DEST_ORIGIN, tr('destination.origin', '📍 Next to the original file (automatic)'));
+  add('', tr('destination.output', 'Default output folder'));
+  if (destDir && destDir !== DEST_ORIGIN) add(destDir, '📁 ' + destDir);
+  add('__browse', tr('destination.choose', '📂 Choose a folder…'));
+  destSelect.value = destDir;
+  refreshDestHint();
+}
+
+function destFilesKey(files) {
+  return files.map(f => f.name + ':' + f.size).join('|');
+}
+
+// Ask the server where the originals of the selected files are
+async function locateOriginals(files) {
+  const key = destFilesKey(files);
+  if (key === destLocated.key) return destLocated.dirs;
+  try {
+    const res = await fetch('/library/locate', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ files: files.map(f => ({ name: f.name, size: f.size })) })
+    });
+    const data = await res.json();
+    destLocated = { key, dirs: data.dirs || [] };
+  } catch (e) {
+    destLocated = { key, dirs: [] };
+  }
+  return destLocated.dirs;
+}
+
+async function refreshDestHint() {
+  if (!destEnabled || destDir !== DEST_ORIGIN) { destHint.textContent = ''; return; }
+  const docs = selectedFiles.filter(f => !/\.(jpe?g|png|tiff?|bmp|webp)$/i.test(f.name));
+  if (!docs.length) {
+    destHint.textContent = tr('destination.hint_origin', 'Each converted file is placed next to its original (found in the library by its name).');
+    return;
+  }
+  destHint.textContent = tr('destination.searching', 'Looking for the originals…');
+  const dirs = await locateOriginals(docs);
+  if (destDir !== DEST_ORIGIN) return;
+  const found = dirs.filter(Boolean);
+  const unique = [...new Set(found)];
+  const missing = docs.length - found.length;
+  let text;
+  if (!found.length) text = tr('destination.not_found', '⚠️ Original not found in the library: the converted file will stay in the output folder.');
+  else if (unique.length === 1) text = tr('destination.found_one', '✅ Destination: /{dir}', { dir: unique[0] });
+  else text = tr('destination.found_many', '✅ {count} file(s) found, in {dirs} different folders', { count: found.length, dirs: unique.length });
+  if (found.length && missing) text += ' — ' + tr('destination.some_missing', '⚠️ {count} not found, they will stay in the output folder', { count: missing });
+  destHint.textContent = text;
+}
+
+function destItem(label, onClick, bold) {
+  const it = document.createElement('div');
+  it.textContent = label;
+  it.style.cssText = 'padding:8px 12px; cursor:pointer; border-bottom:1px solid rgba(128,128,128,0.2);' + (bold ? 'font-weight:bold;' : '');
+  it.addEventListener('mouseenter', () => { it.style.background = 'rgba(255,152,0,0.15)'; });
+  it.addEventListener('mouseleave', () => { it.style.background = ''; });
+  it.addEventListener('click', onClick);
+  return it;
+}
+
+async function loadDestFolder(p) {
+  destList.textContent = tr('destination.loading', 'Loading…');
+  try {
+    const res = await fetch('/library/list?path=' + encodeURIComponent(p || ''));
+    const data = await res.json();
+    if (data.error) throw new Error(data.error);
+    destCurrent = data.path || '';
+    destCrumb.textContent = '📂 /' + destCurrent;
+    destInfo.textContent = tr('destination.folder_info', '{dirs} sub-folder(s) • {files} comic(s) in this folder', { dirs: data.dirs.length, files: data.files });
+    destList.innerHTML = '';
+    if (destCurrent) {
+      const parent = destCurrent.split('/').slice(0, -1).join('/');
+      destList.appendChild(destItem('⬆️  ' + tr('destination.parent', '.. (parent folder)'), () => loadDestFolder(parent), true));
+    }
+    if (!data.dirs.length) {
+      const empty = document.createElement('div');
+      empty.style.cssText = 'padding:8px 12px; opacity:0.6;';
+      empty.textContent = tr('destination.empty', '(no sub-folder)');
+      destList.appendChild(empty);
+    }
+    data.dirs.forEach(d => destList.appendChild(destItem('📁  ' + d, () => loadDestFolder(destCurrent ? destCurrent + '/' + d : d))));
+  } catch (e) {
+    destList.textContent = 'Error: ' + e.message;
+    if (p) setTimeout(() => loadDestFolder(''), 1200);
+  }
+}
+
+// The browser opens directly in the folder of the original when it can be found
+async function openDestBrowser() {
+  destModal.style.display = 'flex';
+  destOriginInfo.textContent = '';
+  if (destDir && destDir !== DEST_ORIGIN) return loadDestFolder(destDir);
+  if (!selectedFiles.length) return loadDestFolder('');
+  destList.textContent = tr('destination.searching', 'Looking for the originals…');
+  const first = (await locateOriginals(selectedFiles)).filter(Boolean)[0];
+  destOriginInfo.textContent = first
+    ? tr('destination.origin_found', 'Original found in: /{dir}', { dir: first })
+    : tr('destination.origin_not_found', 'Original not found in the library');
+  loadDestFolder(first || '');
+}
+
+async function initDestination() {
+  try {
+    const res = await fetch('/library/config');
+    destEnabled = !!(await res.json()).enabled;
+  } catch (e) { destEnabled = false; }
+  if (!destEnabled) return;
+
+  // Default: next to the original file
+  destDir = DEST_ORIGIN;
+  try {
+    const saved = localStorage.getItem(DEST_STORAGE_KEY);
+    if (saved === ':output') destDir = '';
+    else if (saved) destDir = saved;
+  } catch (e) {}
+
+  destGroup.style.display = '';
+  renderDestSelect();
+
+  destSelect.addEventListener('change', () => {
+    if (destSelect.value === '__browse') { destSelect.value = destDir; openDestBrowser(); }
+    else setDestDir(destSelect.value);
+  });
+  document.getElementById('btn-dest-browse').addEventListener('click', openDestBrowser);
+  document.getElementById('btn-dest-cancel').addEventListener('click', () => { destModal.style.display = 'none'; });
+  destModal.addEventListener('click', (e) => { if (e.target === destModal) destModal.style.display = 'none'; });
+  document.getElementById('btn-dest-origin').addEventListener('click', () => { setDestDir(DEST_ORIGIN); destModal.style.display = 'none'; });
+  document.getElementById('btn-dest-pick').addEventListener('click', () => {
+    if (!destCurrent) return; // the library root itself is not a valid destination
+    setDestDir(destCurrent);
+    destModal.style.display = 'none';
+  });
+  document.getElementById('btn-dest-mkdir').addEventListener('click', async () => {
+    const name = prompt(tr('destination.new_folder_prompt', 'New folder name:'));
+    if (!name) return;
+    try {
+      const res = await fetch('/library/mkdir', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ path: destCurrent, name: name.trim() })
+      });
+      const data = await res.json();
+      if (data.error) throw new Error(data.error);
+      loadDestFolder(data.path);
+    } catch (e) {
+      alert('Error: ' + e.message);
+    }
+  });
+
+  // Refresh the hint when the file selection changes
+  let lastKey = '';
+  setInterval(() => {
+    const key = destFilesKey(selectedFiles);
+    if (key !== lastKey) { lastKey = key; refreshDestHint(); }
+  }, 800);
+}
+
+initDestination();
