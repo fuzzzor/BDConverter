@@ -797,6 +797,8 @@ btnConvert.addEventListener('click', async () => {
   formData.append('rotation', document.getElementById('rotation').value);
   formData.append('imgFormat', document.getElementById('imgFormat').value);
   formData.append('destDir', getDestDir());
+  const addComicInfoCheckbox = document.getElementById('addComicInfo');
+  formData.append('addComicInfo', (addComicInfoCheckbox && addComicInfoCheckbox.checked) ? 'true' : 'false');
   // New parameters: split double pages & reading direction
   const splitVal = document.getElementById('splitDouble') ? document.getElementById('splitDouble').value : 'no';
   const readingVal = document.getElementById('readingDir') ? document.getElementById('readingDir').value : 'ltr';
@@ -1661,3 +1663,16 @@ function initFolderConversion() {
 }
 
 initDestination();
+
+// Remember the ComicInfo.xml option
+(() => {
+  const cb = document.getElementById('addComicInfo');
+  if (!cb) return;
+  try {
+    const saved = localStorage.getItem('bdc-addComicInfo');
+    if (saved !== null) cb.checked = saved === 'true';
+  } catch (e) {}
+  cb.addEventListener('change', () => {
+    try { localStorage.setItem('bdc-addComicInfo', cb.checked ? 'true' : 'false'); } catch (e) {}
+  });
+})();

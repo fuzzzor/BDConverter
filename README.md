@@ -34,6 +34,12 @@ Features
 
 Changelog
 ---------
+### v1.3.3
+- **Library conversion** — Convert library folders directly on the server and select the destination directory.
+- **ComicInfo metadata** — Generate ComicInfo.xml metadata for comic archives.
+- **Upload fixes** — Improve handling of large uploads and documents in folders.
+- **Deployment** — Update Docker Compose configuration and French translations.
+
 ### v1.3.2
 - **Fix: Corrupt JPEG support** — JPEG images with extraneous bytes (common in scanned CBR/CBZ archives) no longer cause a 500 error. Files are sanitized via `jpegtran` before Sharp processing; fallback to raw copy if sanitization also fails.
 - **Fix: Page range (multi-source images)** — `pageStart`/`pageEnd` range was ignored when sources were uploaded images (`processMergeTask`). Now correctly applied via `slice()` before processing.
@@ -117,6 +123,21 @@ Existing files are never overwritten (`Name.cbz` becomes `Name (2).cbz`), new fi
       - ./output:/app/output
       - /path/to/your/comics:/library
 ```
+
+ComicInfo.xml
+-------------
+The **Add ComicInfo.xml** option (enabled by default) writes a `ComicInfo.xml` at the root of CBZ / CBR / CB7 / CBT archives, so that comic servers such as Kavita or Komga group the albums of a series correctly instead of guessing from the file name. The information is deduced from the file name, and from its folder when needed:
+
+| Dropped file | Series | Number | Title | Year |
+|---|---|---|---|---|
+| `Astérix - T02 - La serpe d'or (1962).pdf` | Astérix | 2 | La serpe d'or | 1962 |
+| `Achille Talon - INT01.pdf` | Achille Talon | 1 | | |
+| `XIII Vol. 03.pdf` | XIII | 3 | | |
+| `HardLand/01-Le sanglier.pdf` (folder dropped) | HardLand | 1 | Le sanglier | |
+| `Metal Hurlant 042.pdf` | Metal Hurlant | 42 | | |
+| `Shutter island (2008).pdf` (one-shot) | Shutter island | | | 2008 |
+
+Recognised volume markers: `T02`, `T.2`, `Tome 2`, `Vol. 3`, `Volume 3`, `INT01`, `Intégrale 1`, `#4`, `n°4`.
 
 Convert library folders on the server (optional)
 ------------------------------------------------
