@@ -1,0 +1,29 @@
+services:
+  bdconverter:
+    image: fuzzzor/bdconverter:latest
+    container_name: BDconverter
+    ports:
+    - 3111:3111
+    environment:
+    - NODE_ENV=production
+    - LOGS=info
+    - THEME=default
+    - PUID=1000
+    - PGID=100
+    - DEST_ROOT=/library
+    - FOLDER_CONCURRENCY=2
+    command:
+    - node
+    - -r
+    - ./dest-patch.js
+    - server.js
+    volumes:
+    - /volume1/docker/bdconverter/output:/app/output
+    - /volume1/docker/bdconverter/upload:/app/upload
+    - /volume1/docker/bdconverter/temp:/app/temp
+    - /uncomp3/V3X.BD:/library/V3X.BD
+    - /musiques/LivresetBD:/library/LivresetBD
+    - /volume1/docker/bdconverter/scripts/dest-patch.js:/app/dest-patch.js:ro
+    - /volume1/docker/bdconverter/scripts/dest-ui.js:/app/dest-ui.js:ro
+    - /volume1/docker/bdconverter/scripts/comicinfo-addon.js:/app/comicinfo-addon.js:ro
+    restart: unless-stopped
