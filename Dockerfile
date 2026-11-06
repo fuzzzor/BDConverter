@@ -35,6 +35,10 @@ RUN npm install
 # Copy the rest of the source code
 COPY . .
 
+# Keep the entrypoint outside /app so legacy script mounts cannot hide it.
+COPY entrypoint.sh /usr/local/bin/bdconverter-entrypoint.sh
+RUN chmod +x /usr/local/bin/bdconverter-entrypoint.sh
+
 # Remove unused Windows and Electron files
 RUN rm -rf bin main.js preload.js
 
@@ -45,4 +49,5 @@ RUN mkdir -p uploads
 EXPOSE 3111
 
 # Server startup command
+ENTRYPOINT ["/usr/local/bin/bdconverter-entrypoint.sh"]
 CMD ["node", "server.js"]

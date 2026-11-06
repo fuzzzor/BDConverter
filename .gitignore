@@ -26,7 +26,6 @@ bin/
 .env.local
 
 # Docker
-.dockerignore
 docker-compose.example.yml
 
 # IDE / editors

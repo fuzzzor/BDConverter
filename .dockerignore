@@ -5,3 +5,12 @@ output
 Dockerfile
 .dockerignore
 .gitignore
+upload
+uploads
+temp
+.env
+.env.*
+*.log
+.vscode
+.idea
+__pycache__

@@ -110,6 +110,15 @@ Environment variables
 - `LIBRARY_DIR` — optional: folder of your comic library inside the container. Enables the **Destination** option and the conversion of library folders (see below).
 - `FOLDER_CONCURRENCY` — number of files converted at the same time when converting library folders (default: 2)
 
+Container startup and legacy scripts
+------------------------------------
+The image starts through `entrypoint.sh`, which creates the output, upload and temporary directories and forwards signals to the server.
+For older Compose configurations, `DEST_ROOT` is used as `LIBRARY_DIR` when the latter is not set; `TIMEZONE` is used as `TZ` when the latter is not set.
+
+The legacy command `node -r ./dest-patch.js server.js` is supported. If the preload is missing, unreadable or mounted as a directory, the entrypoint logs a warning and starts the native server without that preload. Native library destination and ComicInfo support remain available, but custom behavior from external scripts is not recreated. A readable script is still loaded normally, and errors inside it are not suppressed.
+
+Rebuild the image and recreate the container to use this entrypoint; pulling a previously published image does not add it. Existing Compose settings and mounts can be kept. The build context excludes local dependencies and runtime data via `.dockerignore`.
+
 Destination: next to the original file (optional)
 -------------------------------------------------
 When `LIBRARY_DIR` is set, a **Destination** field appears in the UI:
