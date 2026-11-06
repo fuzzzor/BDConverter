@@ -1,31 +1,34 @@
+---
 services:
   bdconverter:
     image: fuzzzor/bdconverter:latest
-    container_name: BDconverter
+    container_name: bdconverter
     ports:
-    - 3111:3111
+      - "3111:3111"
     environment:
-    - NODE_ENV=production
-    - LOGS=info
-    - THEME=default
-    - PUID=1000
-    - PGID=100
-    - DEST_ROOT=/app/output
-    - FOLDER_CONCURRENCY=2
+      - NODE_ENV=production
+      - LOGS=info
+      - THEME=comic
+      - PUID=1000
+      - PGID=100
+      - TIMEZONE=Europe/Paris
+      - DEST_ROOT=/app/output
+      - FOLDER_CONCURRENCY=2
     command:
-    - node
-    - -r
-    - ./dest-patch.js
-    - server.js
+      - node
+      - -r
+      - ./dest-patch.js
+      - server.js
     volumes:
-    - /volume1/docker/bdconverter/output:/app/output
-    - /volume1/docker/bdconverter/upload:/app/upload
-    - /volume1/docker/bdconverter/temp:/app/temp
-    - /volume1/docker/bdconverter/scripts/dest-patch.js:/app/dest-patch.js:ro
-    - /volume1/docker/bdconverter/scripts/dest-ui.js:/app/dest-ui.js:ro
-    - /volume1/docker/bdconverter/scripts/comicinfo-addon.js:/app/comicinfo-addon.js:ro
+      - /volume1/fichiers/amule/bdconverter:/app/output
+    # - /volume1/docker/bdconverter/output:/app/output
+      - /volume1/docker/bdconverter/upload:/app/upload
+      - /volume1/docker/bdconverter/temp:/app/temp
+      - /volume1/docker/bdconverter/scripts/dest-patch.js:/app/dest-patch.js:ro
+      - /volume1/docker/bdconverter/scripts/dest-ui.js:/app/dest-ui.js:ro
+      - /volume1/docker/bdconverter/scripts/comicinfo-addon.js:/app/comicinfo-addon.js:ro
     restart: unless-stopped
 
-    # For reinit browser tape on console Shift F12 :
+    # For reinit browser tape on console F12 :
     # localStorage.removeItem('bdconverter-theme');
     # location.reload();

@@ -34,6 +34,10 @@ Features
 
 Changelog
 ---------
+### v1.3.4
+- **Deployment** — Update Docker Compose with the comic theme, Europe/Paris timezone, custom output directory and lowercase container name.
+- **External scripts** — Keep the custom startup command and script bind mounts; the three scripts must be provided on the deployment host.
+
 ### v1.3.3
 - **Library conversion** — Convert library folders directly on the server and select the destination directory.
 - **ComicInfo metadata** — Generate ComicInfo.xml metadata for comic archives.
