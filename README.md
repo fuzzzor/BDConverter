@@ -34,6 +34,12 @@ Features
 
 Changelog
 ---------
+### v1.3.3
+- **Library conversion** — Convert library folders directly on the server and select the destination directory.
+- **ComicInfo metadata** — Generate ComicInfo.xml metadata for comic archives.
+- **Upload fixes** — Improve handling of large uploads and documents in folders.
+- **Deployment** — Update Docker Compose configuration and French translations.
+
 ### v1.3.2
 - **Fix: Corrupt JPEG support** — JPEG images with extraneous bytes (common in scanned CBR/CBZ archives) no longer cause a 500 error. Files are sanitized via `jpegtran` before Sharp processing; fallback to raw copy if sanitization also fails.
 - **Fix: Page range (multi-source images)** — `pageStart`/`pageEnd` range was ignored when sources were uploaded images (`processMergeTask`). Now correctly applied via `slice()` before processing.
